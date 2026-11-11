@@ -20,6 +20,7 @@ import {
   type TemperatureCurve,
 } from "@zpcrweb/core";
 import { computeWellTypes } from "../../lib/wellTypes";
+import { solveThreshold, type SolvableCurve } from "../../lib/solveThreshold";
 import { SAMPLE_TYPE_META } from "../../lib/sampleType";
 import {
   wellKey,
@@ -1084,12 +1085,62 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
   /** One line of feedback for the import buttons — the only place the app says anything
    * about a file it just read, and it clears itself so the rail stays quiet. */
   const [cfxNote, setCfxNote] = useState<string | null>(null);
+  /** Set while an imported Cq table is still being matched: each pass re-solves the threshold on
+   * the curves the previous pass produced, because the per-well baseline depends on the Cq that
+   * threshold yields. Two passes land on the fixed point; the third is a safety net. */
+  const [solveFor, setSolveFor] = useState<Record<string, number> | null>(null);
+  const [solveRound, setSolveRound] = useState(0);
 
   useEffect(() => {
     if (!cfxNote) return;
     const timer = window.setTimeout(() => setCfxNote(null), 8000);
     return () => window.clearTimeout(timer);
   }, [cfxNote]);
+
+  /** The threshold that reproduces a set of reported Cq values on this run's own curves. CFX never
+   * writes its automatic threshold down, and re-deriving its rule lands about twice as high, so
+   * when the user hands us their numbers we solve for the line that puts our crossings on them. */
+  const thresholdForCq = (reported: Record<string, number>): number | null => {
+    const curves: SolvableCurve[] = [];
+    const seen = new Set<string>();
+    for (const [key, cell] of cqTable) {
+      if (!cell.correctedValues) continue;
+      const [rowText, colText] = key.split(",");
+      const row = Number(rowText);
+      const col = Number(colText);
+      const well = `${"ABCDEFGH"[row] ?? ""}${col + 1}`;
+      if (!(well in reported) || seen.has(well)) continue;
+      const curve = allCurves.find((cv) => cv.row === row && cv.col === col);
+      if (!curve) continue;
+      seen.add(well);
+      curves.push({ well, cycles: curve.cycles, values: cell.correctedValues });
+    }
+    return solveThreshold(curves, reported);
+  };
+
+  // Re-solve the imported Cq against the curves that the last solve produced, until the threshold
+  // stops moving. The first pass runs on the pre-import curves, whose per-well baselines were
+  // placed from our own Cq, so it lands a little off; the second pass corrects that.
+  useEffect(() => {
+    if (!solveFor || solveRound > 2) return;
+    const solved = thresholdForCq(solveFor);
+    if (solved == null) {
+      setSolveFor(null);
+      return;
+    }
+    const current = thresholdGroups.map((g) => settings.thresholdOverrides.get(g.fluor) ?? null);
+    if (current.every((value) => value === solved)) {
+      setSolveFor(null);
+      setCfxNote(`已导入 ${Object.keys(solveFor).length} 个孔，阈值对齐到 ${solved} RFU`);
+      return;
+    }
+    setSolveRound((round) => round + 1);
+    onChange({
+      thresholdOverrides: new Map(thresholdGroups.map((g) => [g.fluor, solved])),
+      baselinePerWell: true,
+    });
+    // `thresholdForCq` closes over the analysis tables, so this re-runs when they change.
+  }, [solveFor, solveRound, cqTable]);
 
   const importCfxCq = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1121,8 +1172,25 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
 
     const values = parseCfxCqCsv(text);
     const count = Object.keys(values).length;
-    onChange({ cfxCq: count > 0 ? values : null });
-    setCfxNote(count > 0 ? `已导入 ${count} 个孔的原版 Cq` : "没认出 Cq 列，检查表头");
+    const solved = count > 0 ? thresholdForCq(values) : null;
+    const overrides = solved == null ? null : new Map(thresholdGroups.map((g) => [g.fluor, solved]));
+    onChange({
+      cfxCq: count > 0 ? values : null,
+      ...(overrides ? { thresholdOverrides: overrides, baselinePerWell: true } : {}),
+    });
+    if (count > 0 && overrides) {
+      setSolveRound(1);
+      setSolveFor(values);
+    } else {
+      setSolveFor(null);
+    }
+    setCfxNote(
+      count === 0
+        ? "没认出 Cq 列，检查表头"
+        : solved == null
+          ? `已导入 ${count} 个孔的原版 Cq`
+          : `已导入 ${count} 个孔，并反推出阈值 ${solved} RFU`,
+    );
   };
 
   /** Wells the colour row acts on (Shift-click in the plate grid). Deliberately not part of the

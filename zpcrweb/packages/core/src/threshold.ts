@@ -251,7 +251,9 @@ export function curvatureEstimate(values: number[]): CurvatureEstimate | null {
   if (apex < 0 || !(steepest > 0)) return null;
 
   // The last place the slope bottoms out before it climbs to that maximum: where the curve stops
-  // being flat and starts to rise.
+  // being flat and starts to rise. Measured on three plates (true thresholds 369.2 / 267.6 /
+  // 298.9 RFU), this bounded scan puts the plate line at 623 / 551 / 580 — closer than the
+  // unbounded one (735 / 776), which reads the shoulder instead of the rise.
   let start = Math.max(3, apex - 1);
   for (let i = apex - 1; i >= 4; i--) {
     if (slope[i - 1]! > slope[i]! && slope[i + 1]! > slope[i]!) {
