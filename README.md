@@ -5,6 +5,11 @@
 底层是 [RByers/zpcrweb](https://github.com/RByers/zpcrweb)（GPL-3.0-or-later）的一个分支，本项目在它上面做了：
 中文界面、内置 CFX 文件密码、Electron 桌面打包、按 CFX 算法对齐的 Cq 与熔解分析、板图式 Cq 表与导出、曲线着色等。
 
+## 仓库
+
+- 代码：https://github.com/lif105905-dot/qpcr-reader （私有）
+- 每次改动在仓库根目录跑 `./提交更新.command "说明"` 提交并上传。
+
 ## 怎么用
 
 1. 双击桌面上的 **qPCR Reader.app**（或 `/Applications/qPCR Reader.app`）。
