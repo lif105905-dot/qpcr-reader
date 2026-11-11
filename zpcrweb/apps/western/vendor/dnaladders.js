@@ -1,0 +1,26 @@
+/* DNA ladder 数据来自 GelFigure（MIT，poplarity/GelFigure）js/ladders.js，按厂商数据表核对过。 */
+window.DNALadders = [
+    { id: 'gr1kb', name: 'Thermo GeneRuler 1 kb (SM0311)', sizes: [10000, 8000, 6000, 5000, 4000, 3500, 3000, 2500, 2000, 1500, 1000, 750, 500, 250], ref: [6000, 3000, 1000] },
+    { id: 'gr1kbplus', name: 'Thermo GeneRuler 1 kb Plus (SM1331)', sizes: [20000, 10000, 7000, 5000, 4000, 3000, 2000, 1500, 1000, 700, 500, 400, 300, 200, 75], ref: [5000, 1500, 500] },
+    { id: 'gr100plus', name: 'Thermo GeneRuler 100 bp Plus (SM0321)', sizes: [3000, 2000, 1500, 1200, 1000, 900, 800, 700, 600, 500, 400, 300, 200, 100], ref: [1000, 500] },
+    { id: 'gr100', name: 'Thermo GeneRuler 100 bp (SM0241)', sizes: [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100], ref: [500] },
+    { id: 'gr50', name: 'Thermo GeneRuler 50 bp (SM0371)', sizes: [1000, 900, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50], ref: [500, 250] },
+    { id: 'grmix', name: 'Thermo GeneRuler DNA Ladder Mix (SM0331)', sizes: [10000, 8000, 6000, 5000, 4000, 3500, 3000, 2500, 2000, 1500, 1200, 1000, 900, 800, 700, 600, 500, 400, 300, 200, 100], ref: [3000, 1000, 500] },
+    { id: 'grlow', name: 'Thermo GeneRuler Low Range (SM1191)', sizes: [700, 500, 400, 300, 200, 150, 100, 75, 50, 25], ref: [300, 100] },
+    { id: 'grulow', name: 'Thermo GeneRuler Ultra Low Range (SM1211)', sizes: [300, 200, 150, 100, 75, 50, 35, 25, 20, 15, 10], ref: [50] },
+    { id: 'grexpress', name: 'Thermo GeneRuler Express (SM1553)', sizes: [5000, 3000, 2000, 1500, 1000, 750, 500, 300, 100], ref: [1500, 500] },
+    { id: 'neb1kb', name: 'NEB 1 kb DNA Ladder (N3232)', sizes: [10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1000, 500], ref: [3000] },
+    { id: 'neb100', name: 'NEB 100 bp DNA Ladder (N3231)', sizes: [1517, 1200, 1000, 900, 800, 700, 600, 500, 400, 300, 200, 100], ref: [1000, 500] },
+    { id: 'neb1kbplus', name: 'NEB 1 kb Plus DNA Ladder (N3200)', sizes: [10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1200, 1000, 900, 800, 700, 600, 500, 400, 300, 200, 100], ref: [3000, 1000, 500] },
+    { id: 'dl2000', name: 'Takara DL2000 (3427A)', sizes: [2000, 1000, 750, 500, 250, 100], ref: [750] },
+    { id: 'dl5000', name: 'Takara DL5000 (3428A)', sizes: [5000, 3000, 2000, 1500, 1000, 750, 500, 250, 100], ref: [1000] },
+    { id: 'dl15000', name: 'Takara DL15000 (3582A)', sizes: [15000, 10000, 7500, 5000, 2500, 1000, 250], ref: [] },
+    { id: 'trans2k', name: 'TransGen Trans2K (BM101)', sizes: [2000, 1000, 750, 500, 250, 100], ref: [750] },
+    { id: 'trans2kplus', name: 'TransGen Trans2K Plus (BM111)', sizes: [5000, 3000, 2000, 1000, 750, 500, 250, 100], ref: [750] },
+    { id: 'trans2kplus2', name: 'TransGen Trans2K Plus II (BM121)', sizes: [8000, 5000, 3000, 2000, 1000, 750, 500, 250, 100], ref: [750] },
+    { id: 'trans5k', name: 'TransGen Trans5K', sizes: [5000, 3000, 2000, 1500, 1000, 800, 500, 300], ref: [1500] },
+    { id: 'trans15k', name: 'TransGen Trans15K (BM161)', sizes: [15000, 10000, 7500, 5000, 3000, 1500, 1000, 500], ref: [5000] },
+    { id: 'tiangen2000', name: 'Tiangen Marker D2000 (MD114)', sizes: [2000, 1000, 750, 500, 250, 100], ref: [750] },
+    { id: 'yeasen1kb', name: 'Yeasen GoldBand 1 kb (10510ES)', sizes: [12000, 8000, 6000, 5000, 4000, 3000, 2500, 2000, 1500, 1000, 750, 500, 250], ref: [4000, 1500] },
+    { id: 'yeasen100plus', name: 'Yeasen GoldBand 100 bp Plus (10516ES)', sizes: [3000, 2000, 1500, 1200, 1000, 900, 800, 700, 600, 500, 400, 300, 200, 100], ref: [1200, 500] }
+  ].map(function (l) { return Object.assign({ kind: 'dna' }, l); });

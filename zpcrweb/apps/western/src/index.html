@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabKit</title>
+<link rel="stylesheet" href="app.css">
+<script>
+// 桌面壳里另一个工具（qPCR）只有深色主题，所以首次启动默认跟随它；用户仍可在编辑器里切换。
+try { if (!localStorage.getItem('wa-theme')) localStorage.setItem('wa-theme', 'dark'); } catch (e) {}
+</script>
+</head>
+<body>
+<main id="view"></main>
+<script src="../vendor/tiff.js"></script>
+<script src="../vendor/wbladders.js"></script>
+  <script src="../vendor/gf-engine.js"></script>
+<script src="../vendor/dnaladders.js"></script>
+<script src="core/util.js"></script>
+<script src="core/theme.js"></script>
+<script src="core/doc.js"></script>
+<script src="core/transform.js"></script>
+<script src="core/canvasmath.js"></script>
+<script src="core/image.js"></script>
+<script src="core/detect.js"></script>
+  <script src="core/lanes.js"></script>
+<script src="core/figure.js"></script>
+<script src="core/ladders.js"></script>
+<script src="core/marker.js"></script>
+<script src="core/annotations.js"></script>
+<script src="core/render.js"></script>
+<script src="core/export.js"></script>
+  <script src="core/project.js"></script>
+<script src="ui/home.js"></script>
+<script src="ui/editor.js"></script>
+<script src="ui/controls.js"></script>
+<script src="ui/canvasview.js"></script>
+<script src="ui/figureview.js"></script>
+<script src="ui/exporter.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

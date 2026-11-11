@@ -1,0 +1,12 @@
+{
+  "name": "western-analysis",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "e2e": "node e2e/smoke.mjs && node e2e/phase2.mjs && node e2e/phase2b.mjs && node e2e/phase3.mjs && node e2e/phase4.mjs && node e2e/phase5.mjs && node e2e/phase6.mjs && node e2e/phase7.mjs && node e2e/phase8.mjs && node e2e/phase9.mjs && node e2e/phase10.mjs && node e2e/phase11.mjs && node e2e/phase12.mjs && node e2e/phase13.mjs && node e2e/phase14.mjs && node e2e/phase15.mjs && node e2e/phase16.mjs && node e2e/phase17.mjs && node e2e/phase18.mjs && node e2e/phase19.mjs && node e2e/phase20.mjs && node e2e/phase21.mjs && node e2e/phase22.mjs && node e2e/bundle.mjs",
+    "build": "node tools/build.mjs",
+    "app": "bash app/build.sh",
+    "verify": "npm test && npm run e2e && npm run build && node e2e/bundle.mjs"
+  }
+}

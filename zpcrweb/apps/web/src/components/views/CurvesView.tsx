@@ -1753,7 +1753,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
             </div>
             <span className="rail__hint">
               {settings.baselinePerWell
-                ? "逐孔窗口：每孔用自己 Cq 前面的那几个循环拟合基线 —— 与原版固定阈值时的 Cq 最接近（实测平均差 0.11 循环）"
+                ? "逐孔窗口：用每孔自己 Cq 前的循环拟合基线"
                 : "文件窗口：用板里声明的循环 —— 原版自动阈值时更接近（实测平均差 0.077 循环）"}
             </span>
           </details>

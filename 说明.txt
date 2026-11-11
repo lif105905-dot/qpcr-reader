@@ -1,22 +1,29 @@
-qPCR 读取器（Bio-Rad CFX .pcrd / .zpcr）使用说明
+LabKit（qPCR 读取器 + Western blot 成图）使用说明
 =====================================================
 
-〇、名字与图标
-  · 应用名（桌面图标、程序坞、菜单栏）是英文「qPCR Reader」，界面是中文
-  · 桌面上只有一个 qPCR Reader.app，双击即可；/Applications 里同名的那份是启动器，
-    真程序在 ~/Library/Application Support/qPCR Reader/qPCR.app
+○、这是什么、名字与图标
+  一个本地应用，首页三张卡：
+    · Western blot   —— 膜图成图与定量
+    · 凝胶           —— 凝胶图与标尺
+    · qPCR 读取器     —— Bio-Rad CFX 的 .pcrd / .zpcr，出 Cq 与熔解
+  点 qPCR 卡片会另开一个窗口，两个工具各干各的，状态互不影响。
+  所有数据都在本机处理，不上传、不联网。
+
+  · 应用名（桌面图标、程序坞、菜单栏）是「LabKit」，界面是中文
+  · 桌面上只有一个 LabKit.app，双击即可；/Applications 里同名的那份是启动器，
+    真程序在 ~/Library/Application Support/LabKit/LabKit.app
 
 一、怎么打开
-  双击桌面上的「qPCR Reader.app」图标  ← 最省事，和普通 app 一样（不弹终端窗口）
-  · 桌面上那个图标是软链接，指向 /Applications/qPCR Reader.app
-  · /Applications/qPCR Reader.app 只是一个「启动器」（shell 脚本包），
-    它去启动 ~/Library/Application Support/qPCR Reader/qPCR.app 里的真程序
+  双击桌面上的「LabKit.app」图标  ← 最省事，和普通 app 一样（不弹终端窗口）
+  · 桌面上那个图标是软链接，指向 /Applications/LabKit.app
+  · /Applications/LabKit.app 只是一个「启动器」（shell 脚本包），
+    它去启动 ~/Library/Application Support/LabKit/LabKit.app 里的真程序
   · 为什么要拆成两层：这台机器（macOS 15）拒绝经 LaunchServices 启动的
     ad-hoc 签名 Electron 包（双击后进程立刻退出、什么都不发生）。
     启动器不是 Electron，不受这条限制，所以由它转手启动真程序。
   · ⚠️ 所以：更新版本时**只能**把新包 ditto 到
-    ~/Library/Application Support/qPCR Reader/qPCR.app，
-    **绝不能**覆盖到 /Applications/qPCR Reader.app —— 那会把启动器盖掉，
+    ~/Library/Application Support/LabKit/LabKit.app，
+    **绝不能**覆盖到 /Applications/LabKit.app —— 那会把启动器盖掉，
     双击就没反应、或者打开的仍是旧版本。重新打包.command 已经固定按正确位置装。
   · 也可以把 .pcrd 文件拖到桌面图标上，它会带着文件启动
 
@@ -28,7 +35,7 @@ qPCR 读取器（Bio-Rad CFX .pcrd / .zpcr）使用说明
      坐标（线性/对数）、Cq 范围；熔解模式看 −dF/dT 与 Tm，可导出 CSV，
      也可把熔解曲线导出成 TIFF 图片（透明背景，直接贴进 PPT / 论文）
 
-三、为什么不能直接双击 qPCR Reader.app（已用启动器绕过）
+三、为什么不能直接双击 LabKit.app（已用启动器绕过）
   本机 macOS 15 的 AMFI 拒绝把 ad-hoc 签名应用经 LaunchServices 启动，日志里是
     amfid: .../Mantle.framework/.../Mantle not valid: AppleMobileFileIntegrityError Code=-423
     "The file is adhoc signed or signed by an unknown certificate chain"
@@ -170,8 +177,8 @@ qPCR 读取器（Bio-Rad CFX .pcrd / .zpcr）使用说明
   cd apps/desktop
   /usr/local/bin/node ../../node_modules/electron-builder/cli.js --mac --dir
   pkill -f "Contents/MacOS/qPCR Reader"
-  rm -rf "/Applications/qPCR Reader.app"
-  ditto --noextattr --norsrc "out/mac-arm64/qPCR Reader.app" "/Applications/qPCR Reader.app"
+  rm -rf "/Applications/LabKit.app"
+  ditto --noextattr --norsrc "out/mac-arm64/LabKit.app" "/Applications/LabKit.app"
   注意：不要去改 Info.plist 的 CFBundleName —— Electron 按它去找
   「<CFBundleName> Helper.app」，改名就会报 FATAL: Unable to find helper app。
   中文化词条在 apps/web/i18n/zh-CN.json，插件 apps/web/i18n/plugin.mjs。

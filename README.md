@@ -1,6 +1,7 @@
-# qPCR 读取器（macOS）
+# LabKit（macOS 本地工具）
 
-把 Bio-Rad CFX 的原始数据文件（`.pcrd` / `.zpcr` / `.pltd` / `.prcl`）在 Mac 上打开，看扩增曲线、Ct（Cq）与熔解曲线，导出表格与图片。
+一个本地应用，首页三张卡：**Western blot**（膜图成图与定量）、**凝胶**（DNA/蛋白凝胶与标尺）、**qPCR 读取器**（Bio-Rad CFX 的 `.pcrd` / `.zpcr` / `.pltd` / `.prcl`，出扩增曲线、Cq 与熔解）。
+点 qPCR 卡片会另开一个窗口，两个工具各干各的；数据全在本机处理。
 
 底层是 [RByers/zpcrweb](https://github.com/RByers/zpcrweb)（GPL-3.0-or-later）的一个分支，本项目在它上面做了：
 中文界面、内置 CFX 文件密码、Electron 桌面打包、按 CFX 算法对齐的 Cq 与熔解分析、板图式 Cq 表与导出、曲线着色等。
@@ -12,8 +13,8 @@
 
 ## 怎么用
 
-1. 双击桌面上的 **qPCR Reader.app**（或 `/Applications/qPCR Reader.app`）。
-2. 把 `.pcrd` / `.zpcr` 文件拖进窗口，或点右上角「打开文件」。
+1. 双击桌面上的 **LabKit.app**（或 `/Applications/LabKit.app`），首页选一个工具。
+2. qPCR：把 `.pcrd` / `.zpcr` 拖进窗口，或点右上角「打开文件」；Western：点「打开图片」。
 3. 顶部三个主标签：**定量数据**（扩增曲线 + Cq 表 + 板图）、**熔解数据**、**文件**；
    其余页面（总览 / 程序 / 板 / 参考 / 校准 / 原始 / 仪器）都收在 **更多 ⋯** 里。
 
