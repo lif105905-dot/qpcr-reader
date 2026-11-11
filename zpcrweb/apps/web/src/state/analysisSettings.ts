@@ -57,6 +57,7 @@ export interface AnalysisSettings
       | "baselineWindow"
       | "baselineMode"
       | "baselineDriftCorrection"
+      | "baselinePerWell"
     >
   > {
   /**

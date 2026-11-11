@@ -272,6 +272,10 @@ export interface StoredView {
   /** Curves view: subtract the residual drift inside the baseline window on top of
    * {@link baselineMode} (CFX's "Baseline Drift Correction"). */
   baselineDriftCorrection: boolean;
+  /** Curves view: place each well's baseline from its own Cq (stopping a few cycles before it)
+   * instead of using the window the file declares. What CFX does, and what matches its Cq at a
+   * fixed threshold; the declared window is the better match when the threshold is automatic. */
+  baselinePerWell: boolean;
 }
 
 /**

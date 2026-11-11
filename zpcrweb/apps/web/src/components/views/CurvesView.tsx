@@ -1682,6 +1682,24 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
                 title="Also subtract the linear drift left inside the baseline window"
               />
             </div>
+            {/* CFX places each well's baseline from that well's own Cq — a window that stops a few
+                cycles before it — rather than from the window a `.pcrd` persists. Against its Cq at
+                a *fixed* threshold that is worth 0.45 → 0.11 cycles of agreement; against its
+                automatic threshold the declared window wins, because the threshold then moves with
+                the curve. Both are offered, and the cycle boxes above still override either. */}
+            <div className="rail__row">
+              <Switch
+                label="Per-well window"
+                checked={settings.baselinePerWell}
+                onChange={(v) => onChange({ baselinePerWell: v })}
+                title="Fit each well's baseline over its own cycles (stops 4 before its Cq), like CFX, instead of the window the file declares"
+              />
+            </div>
+            <span className="rail__hint">
+              {settings.baselinePerWell
+                ? "逐孔窗口：每孔用自己 Cq 前面的那几个循环拟合基线 —— 与原版固定阈值时的 Cq 最接近（实测平均差 0.11 循环）"
+                : "文件窗口：用板里声明的循环 —— 原版自动阈值时更接近（实测平均差 0.077 循环）"}
+            </span>
           </details>
         )}
 

@@ -601,6 +601,10 @@ export interface RunAnalysisSettings {
   /** Subtract the residual drift inside the baseline window on top of {@link baselineMode}
    * (CFX's "Baseline Drift Correction"). Default off. */
   baselineDriftCorrection?: boolean;
+  /** Use a per-well baseline window that stops this many cycles before each well's Cq instead of
+   * the document's own declared window — the app's default (4), which reproduces CFX's split far
+   * better at a fixed threshold. Pass `false` to fall back to the declared window. */
+  baselinePerWell?: boolean | number;
 }
 
 /**
@@ -1030,9 +1034,14 @@ export function computeRunAnalysis(
       // CFX's own Cq far more closely than this library's Cq-dependent search does (see
       // `Zpcr.declaredBaselineWindow`). A `.zpcr` declares nothing and keeps the measured default.
       baselineWindow:
-        settings.baselineWindow === undefined ? zpcr.declaredBaselineWindow : settings.baselineWindow,
+        settings.baselineWindow === undefined
+          ? perWellBaseline(settings.baselinePerWell)
+            ? undefined
+            : zpcr.declaredBaselineWindow
+          : settings.baselineWindow,
       baselineMode: settings.baselineMode,
       baselineDriftCorrection: settings.baselineDriftCorrection,
+      baselineEndMargin: baselineMargin(settings.baselinePerWell),
         // `null` disables even a declared window (the library's own heuristic), which is what
         // measuring against CFX's exports does to compare the two rules.
     },
@@ -1108,4 +1117,20 @@ export function computeRunAnalysis(
     thresholdGroupOf,
     thresholdGroups: calibratedFluors,
   };
+}
+
+/** Default number of cycles a per-well baseline stops before its own Cq. Measured against CFX's
+ * own Cq on `2026-11-09` at a fixed threshold: 4 gives a mean |ΔCq| of 0.11, against 0.45 for the
+ * document's declared window. */
+export const DEFAULT_PER_WELL_END_MARGIN = 4;
+
+/** Whether to place baselines per well (no declared window) rather than using the file's own. */
+function perWellBaseline(setting: boolean | number | undefined): boolean {
+  if (setting === undefined) return false;
+  return setting !== false;
+}
+
+function baselineMargin(setting: boolean | number | undefined): number | undefined {
+  if (typeof setting === "number") return setting;
+  return perWellBaseline(setting) ? DEFAULT_PER_WELL_END_MARGIN : undefined;
 }

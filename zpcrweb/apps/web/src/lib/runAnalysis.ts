@@ -51,6 +51,7 @@ export function useRunAnalysis(
       settings.baselineMode,
       settings.baselineWindow,
       settings.baselineDriftCorrection,
+      settings.baselinePerWell,
       activeStep,
       pltdPassword,
     ],

@@ -62,10 +62,14 @@ export const MIN_BASELINE_WIDTH = 5;
  * `cq` is the Cq computed from a *previous* correction of this same curve — see
  * `baselineCorrectCurve` in `analysis.ts`, which iterates the pair to a fixed point.
  */
-export function baselineRegion(cycles: number[], cq: number | null): BaselineRegion {
+export function baselineRegion(
+  cycles: number[],
+  cq: number | null,
+  endMargin: number = BASELINE_END_MARGIN,
+): BaselineRegion {
   const lastCycle = cycles.length > 0 ? cycles[cycles.length - 1]! : BASELINE_BEGIN_CYCLE;
   const beginCycle = Math.min(BASELINE_BEGIN_CYCLE, lastCycle);
-  const wanted = cq == null ? lastCycle : Math.round(cq) - BASELINE_END_MARGIN;
+  const wanted = cq == null ? lastCycle : Math.round(cq) - endMargin;
   const endCycle = Math.min(lastCycle, Math.max(wanted, beginCycle + MIN_BASELINE_WIDTH - 1));
   return { beginCycle, endCycle };
 }

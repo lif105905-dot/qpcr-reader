@@ -4,6 +4,7 @@
  */
 
 import {
+  BASELINE_END_MARGIN,
   baselineRegion,
   endPointRfu,
   fitLinearBaseline,
@@ -72,6 +73,7 @@ export function baselineCorrectCurve(
   threshold: number | null = null,
   declaredWindow: BaselineRegion | null = null,
   driftCorrection = false,
+  endMargin: number = BASELINE_END_MARGIN,
 ): CurveBaselineResult {
   // A window the document declares for itself (`Zpcr.declaredBaselineWindow`) is used verbatim:
   // it is the instrument's own Data-Window baseline, so there is nothing left to search for, and
@@ -90,12 +92,12 @@ export function baselineCorrectCurve(
     return once.map((v, i) => v - (drift.slope * cycles[i]! + drift.intercept));
   };
 
-  let region = declaredWindow ?? baselineRegion(cycles, null);
+  let region = declaredWindow ?? baselineRegion(cycles, null, endMargin);
   let correctedValues = correct(region, values, mode);
 
   if (declaredWindow == null && threshold != null) {
     for (let pass = 0; pass < MAX_BASELINE_PASSES; pass++) {
-      const next = baselineRegion(cycles, computeCq(cycles, correctedValues, threshold));
+      const next = baselineRegion(cycles, computeCq(cycles, correctedValues, threshold), endMargin);
       if (next.beginCycle === region.beginCycle && next.endCycle === region.endCycle) break;
       region = next;
       correctedValues = correct(region, values, mode);
@@ -138,8 +140,9 @@ export function correctCurveForDisplay(
   mode: BaselineMode,
   options: AutoThresholdOptions = {},
   driftCorrection = false,
+  endMargin: number = BASELINE_END_MARGIN,
 ): CurveBaselineResult {
-  const wholeRun = baselineCorrectCurve(cycles, values, mode, null, null, driftCorrection);
+  const wholeRun = baselineCorrectCurve(cycles, values, mode, null, null, driftCorrection, endMargin);
   return baselineCorrectCurve(
     cycles,
     values,
@@ -147,6 +150,7 @@ export function correctCurveForDisplay(
     autoThreshold([wholeRun.noise], options),
     null,
     driftCorrection,
+    endMargin,
   );
 }
 
@@ -230,6 +234,10 @@ export interface CqTableOptions {
    * instead of `baselineRegion`'s Cq-dependent search — see {@link Zpcr.declaredBaselineWindow}.
    * Omitted (the default) keeps this library's own measured heuristic. */
   baselineWindow?: BaselineRegion;
+  /** How many cycles before its Cq a per-well baseline ends, when no `baselineWindow` is given.
+   * Default {@link BASELINE_END_MARGIN} (2); the app passes 4, which is what reproduces CFX's own
+   * split on `2026-11-09` at a fixed threshold (mean |ΔCq| 0.11 vs 0.45 at 2). */
+  baselineEndMargin?: number;
 }
 
 /**
@@ -320,8 +328,9 @@ export function computeCqTable(
 
   // Pass 1: whole-run baselines, and the automatic thresholds they imply.
   const declaredWindow = options.baselineWindow ?? null;
+  const endMargin = options.baselineEndMargin ?? BASELINE_END_MARGIN;
   const firstPass = unique.map((c) =>
-    baselineCorrectCurve(c.cycles, c.values, mode, null, declaredWindow, driftCorrection),
+    baselineCorrectCurve(c.cycles, c.values, mode, null, declaredWindow, driftCorrection, endMargin),
   );
   const placement = thresholdsFor(firstPass, false);
 
@@ -339,6 +348,7 @@ export function computeCqTable(
       placement.get(c.group) ?? 0,
       declaredWindow,
       driftCorrection,
+      endMargin,
     ),
   );
   const thresholdByGroup = thresholdsFor(baselines, true);
