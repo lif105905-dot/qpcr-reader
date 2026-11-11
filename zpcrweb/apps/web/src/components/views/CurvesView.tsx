@@ -1677,6 +1677,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
                 plateEntry?.pltd.container.encrypted &&
                 (plateEntry.pltd.needsPassword || plateEntry.pltd.error)
               )) && (
+              <>
               <div className="rail__row">
                 {/* "Table" is a fourth option here rather than a tab of its own: it shows the
                     same run, grouped by target like "Target" mode, as a Cq/ΔRFU table instead of
@@ -1686,12 +1687,35 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
                 <Toggle
                   label="View"
                   options={[
+                    ["curve", "Curve"],
+                    ["table", "Table"],
+                  ]}
+                  value={tableMode ? "table" : "curve"}
+                  onChange={(v) =>
+                    v === "table"
+                      ? onChange({ calibration: true, fluorViewMode: "table" })
+                      : onChange({
+                          calibration: true,
+                          fluorViewMode: fluorViewMode === "table" ? "target" : fluorViewMode,
+                        })
+                  }
+                />
+              </div>
+              {/* Channel / Fluorophore / Target used to be three peer modes of the switch above.
+                  They are one panel now — the same run grouped three ways — so they live here,
+                  under the chart they change, and every one of them still works: "Channel" turns
+                  calibration off (`calibration: false`), the other two turn it on with their
+                  own grouping. */}
+              {!tableMode && (
+              <div className="rail__row">
+                <Toggle
+                  label="Group"
+                  options={[
                     ["channel", "Channel"],
                     ["fluorophore", "Fluorophore"],
                     ["target", "Target"],
-                    ["table", "Table"],
                   ]}
-                  value={calibrationOn ? fluorViewMode : "channel"}
+                  value={calibrationOn ? (fluorViewMode === "fluorophore" ? "fluorophore" : "target") : "channel"}
                   onChange={(v) =>
                     v === "channel"
                       ? onChange({ calibration: false })
@@ -1699,6 +1723,8 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
                   }
                 />
               </div>
+              )}
+              </>
             )}
             {plateEntry?.pltd.container.encrypted &&
             (plateEntry.pltd.needsPassword || plateEntry.pltd.error) ? (

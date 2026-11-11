@@ -635,5 +635,7 @@
   "Also subtract the linear drift left inside the baseline window": "额外减去基线窗口内残留的线性漂移",
   "Quantification": "定量数据",
   "More": "更多",
-  "More views": "更多视图"
+  "More views": "更多视图",
+  "Curve": "曲线",
+  "Group": "分组"
 }
