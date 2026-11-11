@@ -81,7 +81,11 @@ import { PasswordPrompt } from "../PasswordPrompt";
 import { Toggle } from "../Toggle";
 import { Switch } from "../Switch";
 import { ResetIcon } from "../ResetIcon";
-import { parseCfxCqCsv } from "../../lib/cfxCq";
+import {
+  parseCfxAmplificationCsv,
+  parseCfxCqCsv,
+  thresholdFromCfxCurves,
+} from "../../lib/cfxCq";
 import { DownloadIcon } from "../DownloadIcon";
 import { ImageIcon } from "../ImageIcon";
 import { UploadIcon } from "../ViewIcons";
@@ -1073,12 +1077,52 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
 
   /** CFX's own Cq export, read into the file's settings so the table can show it beside ours. */
   const cfxInputRef = useRef<HTMLInputElement | null>(null);
+  /** Takes either CFX export: the Cq results fill the two comparison columns, the amplification
+   * results pin down the threshold the plate was analysed with — recovered from where each well's
+   * own curve passes through its Cq, then written into every fluorophore's override so the app
+   * computes Cq the same way CFX did. */
+  /** One line of feedback for the import buttons — the only place the app says anything
+   * about a file it just read, and it clears itself so the rail stays quiet. */
+  const [cfxNote, setCfxNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!cfxNote) return;
+    const timer = window.setTimeout(() => setCfxNote(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [cfxNote]);
+
   const importCfxCq = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    const values = parseCfxCqCsv(await file.text());
-    onChange({ cfxCq: Object.keys(values).length > 0 ? values : null });
+    const text = await file.text();
+
+    const amp = parseCfxAmplificationCsv(text);
+    if (amp) {
+      const cq = settings.cfxCq;
+      if (!cq) {
+        setCfxNote("先把「Cq Results」那张表导进来，再导曲线表");
+        return;
+      }
+      const threshold = thresholdFromCfxCurves(amp, cq);
+      if (threshold == null) {
+        setCfxNote("曲线表里没找到与 Cq 对得上的孔");
+        return;
+      }
+      const value = Math.round(threshold);
+      const next = new Map(settings.thresholdOverrides);
+      for (const g of thresholdGroups) next.set(g.fluor, value);
+      // The per-well window is the calibration that tracks CFX at a fixed threshold; switching it
+      // on here means the numbers line up without the user having to know that.
+      onChange({ thresholdOverrides: next, baselinePerWell: true });
+      setCfxNote(`已按原版曲线反推阈值 ${value} RFU，并切到逐孔窗口`);
+      return;
+    }
+
+    const values = parseCfxCqCsv(text);
+    const count = Object.keys(values).length;
+    onChange({ cfxCq: count > 0 ? values : null });
+    setCfxNote(count > 0 ? `已导入 ${count} 个孔的原版 Cq` : "没认出 Cq 列，检查表头");
   };
 
   /** Wells the colour row acts on (Shift-click in the plate grid). Deliberately not part of the
@@ -2264,6 +2308,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
             >
               <UploadIcon /> {settings.cfxCq ? "重导原版 Cq" : "导入原版 Cq"}
             </button>
+            {cfxNote && <span className="analysis__note">{cfxNote}</span>}
             <input
               ref={cfxInputRef}
               type="file"

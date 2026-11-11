@@ -5651,3 +5651,11 @@ summary.instrument__panelhead {
 .atbl__num .is-good {
   color: #4ec9a0;
 }
+
+/* One line of feedback beside the import buttons: what the app made of the file it just read.
+   Muted, never a badge — it is a receipt, not a warning. */
+.analysis__note {
+  align-self: center;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+}
