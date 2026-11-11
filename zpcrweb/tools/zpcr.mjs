@@ -1,0 +1,565 @@
+#!/usr/bin/env node
+/**
+ * `zpcr` — a command-line face on `@zpcrweb/core`'s run-analysis pipeline.
+ *
+ *   node tools/zpcr.mjs <run> results [--password <pw>] [--step <n>] [--cq-method <id>]
+ *   node tools/zpcr.mjs <run> curves  [--wells A1,B2-D5] [--rows A-C] [--cols 1,5]
+ *                                     [--fluors FAM,HEX] [-o out.png] [--size WxH] [--dpr N]
+ *   node tools/zpcr.mjs <run> melt    [same selection flags] [--raw]
+ *   node tools/zpcr.mjs <out.zpcr> new --name <name> --protocol <p.prcl.txt>
+ *                                      [--plate <p.plt.csv>] [--force]
+ *
+ * `<run>` is any of the three run formats — a CFX `.zpcr` or `.pcrd`, or a Biomeme `.bmrun`
+ * (see {@link runFromFile}). `new` is the one command whose file argument is written rather than
+ * read: it is always a `.zpcr`, and it must not exist yet.
+ *
+ * `results` prints a run's results table — the same one the web app's Curves view shows in
+ * Table mode and downloads as CSV — as CSV on stdout: one row per loaded well/fluorophore pair,
+ * Cq and all.
+ *
+ * `curves` writes those same curves as a PNG of the web app's Curves chart, in its default
+ * Relative mode: not a picture that resembles the chart but one drawn *by* it, since the picture
+ * is rendered by the app's own `buildChart` in headless Chrome (`tools/chartshot.mjs`). See
+ * {@link chartConfig} for the display settings it asks for, and `chartshot.mjs`'s own header for
+ * why the chart is run rather than reimplemented.
+ *
+ * `melt` is the same idea over a **melt step**: the app's `buildMeltChart`, drawing −dF/dT against
+ * temperature (or the raw fluorescence with `--raw`), with each curve's Tm labelled as the app
+ * labels it. It is a separate command rather than a flag on `curves` because a melt is a different
+ * chart over a different axis, not a display mode of the amplification one — `curves --step <melt>`
+ * would run the amplification pipeline over a temperature ramp and produce confident-looking
+ * nonsense (a fitted baseline, Cq markers, a "Cycle" axis). See `meltAnalysis.ts`'s header.
+ *
+ * Every number here comes straight from `computeRunAnalysis`/`buildAnalysisRows`/`analysisCsv`
+ * (`packages/core/src/runAnalysis.ts` and `analysisRows.ts`) — the library's own derivation, not
+ * a second copy of it. This file is wiring: argv parsing, the password fallback, and well
+ * selection. Nothing here touches a Cq, a threshold, a baseline or a color.
+ *
+ * `new` writes a **pending experiment** — a `.zpcr` holding a protocol, optionally a plate, and
+ * the run's name, with no plate reads and no `begun` marker — which is what the app's "New
+ * experiment" makes and what its Instrument view starts. It is the same
+ * `buildExperimentArchive` the app calls (`packages/core/src/experimentArchive.ts`); this file
+ * only reads the two input files off disk and zips the result.
+ *
+ * The commands need different things installed, which is worth knowing before reaching for one
+ * on a bare machine: `results` and `new` are plain Node over a built core (`npm run build`), the
+ * same way `cfx.mjs` is, while `curves` and `melt` also need Chrome and the web app's source,
+ * because that is where the charts live.
+ */
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, extname } from "node:path";
+import {
+  analysisCsv,
+  buildAnalysisRows,
+  buildExperimentArchive,
+  channelCurveKey,
+  channelLabel,
+  computeMeltAnalysisFor,
+  computeRunAnalysis,
+  CQ_METHODS,
+  curveKey,
+  meltCurvesFromFluor,
+  meltSegments,
+  parseBiomeme,
+  parsePcrd,
+  parsePlateCsv,
+  parseZpcr,
+  parseZpcrwebSettings,
+  runAnalysisSettingsFromZpcrweb,
+  wellKey,
+  writeZpcrwebSettings,
+  zipArchive,
+  ZPCRWEB_SETTINGS_VERSION,
+} from "../packages/core/dist/index.js";
+// `chartshot.mjs` is imported where `curves` needs it, not here: it pulls in esbuild and the
+// Chrome harness, and `results` — the reason to reach for this tool on a machine with nothing on
+// it — has no use for either. A static import would make the CSV path fail on a checkout that
+// can render no chart at all.
+
+/** The local, gitignored CFX ZipCrypto password — see `AGENTS.md`'s Secrets section and
+ * `packages/core/test/secrets.ts`, which this mirrors. `undefined` when there's no `secrets.json`. */
+function readCfxPassword() {
+  const path = new URL("../secrets.json", import.meta.url);
+  if (!existsSync(path)) return undefined;
+  return JSON.parse(readFileSync(path, "utf-8")).cfxPassword;
+}
+
+/**
+ * Read a run from disk, whichever of the three run formats it is: a CFX `.zpcr` archive, a CFX
+ * `.pcrd`, or a Biomeme `.bmrun`. All three parse to the same {@link Zpcr} document, which is
+ * what makes one command work across them — the same boundary the web app keeps in its
+ * `parseRun`, and the reason `computeRunAnalysis` below never asks where a run came from.
+ *
+ * Routed on the extension, exactly as the app routes a dropped file: each of the three names its
+ * own format, so there is nothing to sniff. This used to call `zpcrFromFile` unconditionally,
+ * which meant a `.bmrun` — JSON, not a zip — failed with "invalid zip data".
+ */
+async function runFromFile(path, password) {
+  const bytes = new Uint8Array(readFileSync(path));
+  if (/\.bmrun$/i.test(path)) return parseBiomeme(bytes);
+  if (/\.pcrd$/i.test(path)) {
+    const pcrd = parsePcrd(bytes, password ? { password } : undefined);
+    if (pcrd.needsPassword) {
+      throw new Error(
+        `${path}: this file is encrypted. Pass --password, or set cfxPassword in secrets.json.`,
+      );
+    }
+    if (!pcrd.zpcr) throw new Error(`${path}: ${pcrd.error ?? "could not be decoded"}`);
+    return pcrd.zpcr;
+  }
+  return parseZpcr(bytes);
+}
+
+function usage() {
+  console.error(
+    "usage: zpcr <run> results [--password <pw>] [--step <n>] [--cq-method <id>]\n" +
+      "       zpcr <run> curves  [--password <pw>] [--step <n>] [-o <out.png>]\n" +
+      "                           [--wells A1,B2-D5] [--rows A-C] [--cols 1,5-8]\n" +
+      "                           [--fluors FAM,HEX] [--size 1100x620] [--dpr 1]\n" +
+      "                           [--channels]\n" +
+      "       zpcr <run> melt    [same flags as curves] [--raw]\n" +
+      "       zpcr <out.zpcr> new --name <name> --protocol <p.prcl.txt>\n" +
+      "                           [--plate <p.plt.csv>] [--force]\n\n" +
+      "<run> is a CFX .zpcr or .pcrd, or a Biomeme .bmrun. <out.zpcr> is written, not read.\n\n" +
+      "results  the run's results table (the web app's Curves view Table mode) as CSV\n" +
+      "curves   the run's amplification curves as a PNG, as the Curves chart draws them\n" +
+      "melt     the run's melt curves as a PNG, as the melt chart draws them: -dF/dT against\n" +
+      "         temperature, each curve labelled with its Tm. --raw plots the fluorescence\n" +
+      "         itself instead of the derivative. Defaults to the run's first melt step, so\n" +
+      "         --step is only needed for a run with more than one.\n" +
+      "new      a pending experiment — a .zpcr with a protocol, a name and no reads yet,\n" +
+      "         ready to open in the app and start on an instrument. --plate is optional;\n" +
+      "         --force overwrites an existing file.\n\n" +
+      "Well selection: --wells/--rows/--cols are a union (any match plots the well); each\n" +
+      "accepts a comma-separated list whose items may be ranges. A well range spans the\n" +
+      "rectangle between its ends, so --wells A1-B3 is six wells. With none given, every well\n" +
+      "the plate loads is drawn. --fluors then narrows that to the named dyes.\n\n" +
+      "--size is CSS pixels; --dpr multiplies them into device pixels the way a retina\n" +
+      "display would. --size 640x360 --dpr 2 writes a 1280x720 PNG of the chart laid out\n" +
+      "at 640 wide — sharper, not zoomed out.",
+  );
+  process.exit(1);
+}
+
+// ---- Well selection -----------------------------------------------------------------------
+
+/** `A` → 0, `H` → 7. Rows past Z would need two letters, which no plate this reads has. */
+function rowIndex(letter) {
+  const i = letter.toUpperCase().charCodeAt(0) - 65;
+  if (i < 0 || i > 25) throw new Error(`bad row: ${letter}`);
+  return i;
+}
+
+/** `B7` → `{ row: 1, col: 6 }`, both zero-based, matching `WellCurve.row`/`col`. */
+function parseWell(text) {
+  const m = /^([A-Za-z])\s*(\d{1,2})$/.exec(text.trim());
+  if (!m) throw new Error(`bad well: ${text}`);
+  return { row: rowIndex(m[1]), col: Number(m[2]) - 1 };
+}
+
+/** Split a comma list into items, each either a single value or a `lo-hi` range. */
+function parseList(text, parse) {
+  return text
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const dash = item.indexOf("-", 1);
+      if (dash === -1) return { from: parse(item), to: parse(item) };
+      return { from: parse(item.slice(0, dash)), to: parse(item.slice(dash + 1)) };
+    });
+}
+
+/**
+ * The `--wells`/`--rows`/`--cols` flags as one predicate over a well.
+ *
+ * A union, not an intersection: `--rows A --cols 12` means "row A **or** column 12", which is how
+ * someone naming two parts of a plate on one command line means it. Narrowing to a single well is
+ * what `--wells` is for. With no flag at all every well passes, and the caller's own "is this pair
+ * loaded" check is what limits the plot.
+ */
+function wellSelector({ wells, rows, cols }) {
+  if (!wells && !rows && !cols) return () => true;
+  const wellRanges = wells ? parseList(wells, parseWell) : [];
+  const rowRanges = rows ? parseList(rows, (s) => ({ row: rowIndex(s), col: 0 })) : [];
+  const colRanges = cols ? parseList(cols, (s) => ({ row: 0, col: Number(s) - 1 })) : [];
+  const between = (v, a, b) => v >= Math.min(a, b) && v <= Math.max(a, b);
+  return (row, col) =>
+    // A well range covers the rectangle between its corners — A1-B3 is six wells, the block a
+    // reader traces with a finger, not the twenty-four in reading order between them.
+    wellRanges.some((r) => between(row, r.from.row, r.to.row) && between(col, r.from.col, r.to.col)) ||
+    rowRanges.some((r) => between(row, r.from.row, r.to.row)) ||
+    colRanges.some((r) => between(col, r.from.col, r.to.col));
+}
+
+// ---- Curves ------------------------------------------------------------------------------
+
+/**
+ * The run's curves, in the shape the web app's chart takes them: one `PlotCurve` per plotted
+ * series, carrying its analysis record rather than anything derived from it.
+ *
+ * Dye space when the run has a calibration to separate colors with, channel space otherwise —
+ * the same automatic choice the Curves view makes (`settings.calibration ?? calibrationAvailable`),
+ * and `--channels` forces the raw channels for a run that could do either. In dye space a well is
+ * drawn for the dyes the plate actually loads it with; a pair the plate never loads has no curve
+ * worth showing (the app hides those behind its "Unloaded" toggle).
+ *
+ * The `dyeLabel` here is always the dye's own name — the app's Target mode relabels a curve by
+ * the target assigned to its well, which changes what the rail groups and what a tooltip says,
+ * and this picture has neither. Color reads from `fluor`, so it is the same either way.
+ */
+function collectCurves(run, { select, fluors, channels }) {
+  const dyeSpace = channels ? false : run.calibrationAvailable && run.allFluorCurves.length > 0;
+  const wanted = fluors
+    ? new Set(fluors.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean))
+    : null;
+
+  const source = dyeSpace
+    ? run.allFluorCurves
+        .filter((c) => run.wellFluors.get(wellKey(c.row, c.col))?.has(c.dye) ?? false)
+        .map((c) => ({
+          channel: c.channel,
+          dyeLabel: c.dye,
+          fluor: c.dye,
+          row: c.row,
+          col: c.col,
+          wellLabel: c.wellLabel,
+          isReference: c.isReference,
+          cycles: c.cycles,
+          mean: c.mean,
+          analysis: run.cqTable.get(curveKey(c.row, c.col, c.dye)),
+        }))
+    : run.allCurves
+        .filter((c) => run.available.includes(c.channel))
+        .map((c) => ({
+          channel: c.channel,
+          dyeLabel: channelLabel(c.channel),
+          row: c.row,
+          col: c.col,
+          wellLabel: c.wellLabel,
+          isReference: c.isReference,
+          cycles: c.cycles,
+          mean: c.mean,
+          // Channel space is the only space with a real spread to show — see `PlotCurve.std`.
+          std: c.std,
+          min: c.min,
+          max: c.max,
+          analysis: run.plainBaselines.get(channelCurveKey(c.row, c.col, c.channel)),
+        }));
+
+  const curves = source.filter(
+    (c) =>
+      select(c.row, c.col) &&
+      (!wanted || wanted.has((c.fluor ?? channelLabel(c.channel)).toLowerCase())),
+  );
+  for (const c of curves) c.sample = run.wellSample.get(wellKey(c.row, c.col));
+  return { curves, dyeSpace };
+}
+
+/**
+ * What the chart is asked to draw: the Curves view's own defaults, as the app opens on them.
+ *
+ * Relative mode (`threshold.md` §4) on a linear axis, with the overlays that are either
+ * interactive or off by default left out — the dark curves, the right-hand instrument axis, the
+ * min/max bands, the "draw baseline" overlay, and the threshold line the app only shows while a
+ * threshold row is hovered. The Cq rings are neither optional nor configured: `buildChart` draws
+ * one per curve that has a Cq.
+ */
+function chartConfig(curves, { width, height, dpr }) {
+  return {
+    wellCurves: curves,
+    darkCurves: [],
+    factoryCurves: [],
+    drawFactory: false,
+    // An axis with no curves on it hides itself, so these labels are never drawn.
+    aux: { label: "", unit: "", rowLabel: "", decimals: 1, tipDecimals: 1, curves: [] },
+    baseline: "raw",
+    curveView: "relative",
+    drawBaseline: false,
+    scale: "linear",
+    bands: false,
+    width,
+    height,
+    dpr,
+  };
+}
+
+// ---- Melt --------------------------------------------------------------------------------
+
+/**
+ * The melt step's curves, in the shape `buildMeltChart` takes them.
+ *
+ * Mirrors {@link collectCurves}' choice of space, by the same rule the Curves view uses: dye
+ * space when the run has a calibration and solved fluor curves, channel space otherwise, with
+ * `--channels` forcing the latter. The color separation for a melt is solved per read against
+ * *that read's* block temperature, which is why the fluor curves have to come from a
+ * `computeRunAnalysis` run at the melt step rather than at step 1 — see `calibration.md` §2.1.
+ *
+ * In dye space a well is drawn only for the dyes its plate actually loads, matching the app's
+ * "Unloaded" toggle being off by default and `collectCurves`' identical filter.
+ */
+function collectMeltCurves(zpcr, run, step, { select, fluors, channels }) {
+  const melt = computeMeltAnalysisFor(zpcr, step);
+  if (!melt) return undefined;
+
+  const dyeSpace = !channels && run.calibrationAvailable && run.allFluorCurves.length > 0;
+  const analysis = dyeSpace
+    ? meltCurvesFromFluor(melt.segment, run.allFluorCurves, run.available)
+    : melt;
+
+  const wanted = fluors
+    ? new Set(fluors.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean))
+    : null;
+
+  const curves = analysis.curves
+    .filter((c) => {
+      if (!select(c.row, c.col)) return false;
+      if (c.dye === undefined) return c.channel !== undefined && run.available.includes(c.channel);
+      if (!(run.wellFluors.get(wellKey(c.row, c.col))?.has(c.dye) ?? false)) return false;
+      return true;
+    })
+    .filter((c) => !wanted || wanted.has((c.dye ?? channelLabel(c.channel)).toLowerCase()))
+    .map((c) => ({
+      key: `${c.row},${c.col}|${c.dye ?? c.channel}`,
+      dyeLabel: c.dye ?? channelLabel(c.channel),
+      curve: c,
+    }));
+
+  return { curves, dyeSpace, segment: analysis.segment };
+}
+
+/**
+ * What the melt chart is asked to draw: the app's own defaults for a melt step.
+ *
+ * The derivative, because that is the mode selecting a melt step switches the View toggle to and
+ * the only one a Tm is visible in — `--raw` is the escape hatch to the fluorescence itself.
+ */
+function meltChartConfig(curves, segment, { view, width, height, dpr }) {
+  return {
+    curves,
+    temperaturesC: segment.temperaturesC,
+    view,
+    width,
+    height,
+    dpr,
+  };
+}
+
+// ---- new (a pending experiment) ------------------------------------------------------------
+
+/**
+ * Write a pending experiment to `out`: the protocol text from a `.prcl.txt`, optionally a plate
+ * from a `.plt.csv`, and the experiment's name.
+ *
+ * The archive itself is `buildExperimentArchive`'s, unaltered — so a file written here is
+ * byte-for-byte the kind of file "New experiment" creates in the app, and the app can open it,
+ * edit the protocol in place and start it on an instrument. The name goes into `zpcrweb.json`
+ * (`experimentName`), the one place any format has for it; the protocol file's own base name
+ * becomes the protocol's name, exactly as attaching that file in the app does.
+ *
+ * Both input files are validated before anything is written — `buildExperimentArchive` parses the
+ * run definition, and a `.csv` plate is parsed here — so a typo in a protocol fails with a parse
+ * error rather than producing a `.zpcr` the app can't open.
+ */
+function createExperiment(out, { name, protocolPath, platePath, force }) {
+  if (!name?.trim()) throw new Error("new: --name is required");
+  if (!protocolPath) throw new Error("new: --protocol <file.prcl.txt> is required");
+  if (existsSync(out) && !force) {
+    throw new Error(`${out}: already exists — pass --force to overwrite it`);
+  }
+
+  const protocol = {
+    runDefinition: readFileSync(protocolPath, "utf-8"),
+    // `foo.prcl.txt` → protocol "foo", the same derivation the app's "attach a protocol" uses.
+    name: basename(protocolPath).replace(/\.prcl\.txt$/i, ""),
+  };
+
+  let plate;
+  if (platePath) {
+    const bytes = new Uint8Array(readFileSync(platePath));
+    // Parsed for its errors, not its value: the archive stores the file's own bytes.
+    if (/\.csv$/i.test(platePath)) parsePlateCsv(new TextDecoder().decode(bytes));
+    plate = { name: basename(platePath), bytes };
+  }
+
+  const archive = writeZpcrwebSettings(buildExperimentArchive({ protocol, plate }), {
+    version: ZPCRWEB_SETTINGS_VERSION,
+    generator: "zpcrweb",
+    updatedAt: new Date().toISOString(),
+    experimentName: name.trim(),
+  });
+  writeFileSync(out, zipArchive(archive));
+
+  // Read back what was just written, through the same parser the app opens a file with — a
+  // one-line proof that the result is a run, and cheap on an archive this small.
+  const zpcr = parseZpcr(new Uint8Array(readFileSync(out)));
+  const steps = zpcr.protocol()?.program.steps.length ?? 0;
+  const wells = zpcr.plates()[0]?.pltd.plate?.wells.length;
+  console.error(
+    `${out}: "${name.trim()}" — protocol "${protocol.name}" (${steps} step${steps === 1 ? "" : "s"})` +
+      (plate ? `, plate ${plate.name}${wells == null ? "" : ` (${wells} wells)`}` : ", no plate") +
+      ", no reads yet",
+  );
+}
+
+// ---- CLI ----------------------------------------------------------------------------------
+
+async function main() {
+  const argv = process.argv.slice(2);
+  const [file, cmd, ...rest] = argv;
+  if (!file || !cmd) usage();
+  if (cmd !== "results" && cmd !== "curves" && cmd !== "melt" && cmd !== "new") {
+    console.error(`unknown command: ${cmd}`);
+    usage();
+  }
+  // `melt` takes every selection flag `curves` does, so the parser below treats them alike.
+  const plots = cmd === "curves" || cmd === "melt";
+
+  const opts = {};
+  let password;
+  let step;
+  for (let i = 0; i < rest.length; i++) {
+    const flag = rest[i];
+    if (cmd === "new" && flag === "--name") opts.name = rest[++i];
+    else if (cmd === "new" && flag === "--protocol") opts.protocolPath = rest[++i];
+    else if (cmd === "new" && flag === "--plate") opts.platePath = rest[++i];
+    else if (cmd === "new" && flag === "--force") opts.force = true;
+    else if (cmd !== "new" && flag === "--password") password = rest[++i];
+    else if (cmd !== "new" && flag === "--step") step = Number(rest[++i]);
+    else if (cmd !== "new" && flag === "--cq-method") opts.cqMethod = rest[++i];
+    else if (plots && (flag === "-o" || flag === "--out")) opts.out = rest[++i];
+    else if (plots && flag === "--wells") opts.wells = rest[++i];
+    else if (plots && flag === "--rows") opts.rows = rest[++i];
+    else if (plots && flag === "--cols") opts.cols = rest[++i];
+    else if (plots && flag === "--fluors") opts.fluors = rest[++i];
+    else if (plots && flag === "--size") opts.size = rest[++i];
+    else if (plots && flag === "--dpr") opts.dpr = rest[++i];
+    else if (plots && flag === "--channels") opts.channels = true;
+    else if (cmd === "melt" && flag === "--raw") opts.raw = true;
+    else usage();
+  }
+
+  // `new` writes its file argument rather than reading it, so it branches ahead of everything
+  // below — there is no run to load, no plate to decrypt and no analysis to settle.
+  if (cmd === "new") {
+    createExperiment(file, opts);
+    return;
+  }
+
+  // The password is needed *before* parsing a `.pcrd`, whose whole document sits inside an
+  // encrypted zip entry — unlike a `.zpcr`, where only the plate data is encrypted and the
+  // password can wait until `plates()` below.
+  if (password == null) password = readCfxPassword();
+  const zpcr = await runFromFile(file, password);
+
+  let plateEntry = zpcr.plates(password)[0];
+  if (plateEntry?.pltd.needsPassword) {
+    console.error(
+      `${file}: plate data is password-protected. Pass --password, or set cfxPassword in secrets.json.`,
+    );
+    process.exit(1);
+  }
+  if (plateEntry?.pltd.error) {
+    console.error(`${file}: failed to decode plate data: ${plateEntry.pltd.error}`);
+    process.exit(1);
+  }
+
+  const settings = runAnalysisSettingsFromZpcrweb(parseZpcrwebSettings(zpcr));
+  // A `.pcrd` that CFX saved with `autoCalculateThreshold="False"` carries the threshold the
+  // instrument's own analysis used, per fluorophore (`threshold.md` §5.3) — `zpcrweb.json`
+  // outranks it, since that's this library's own record of the same decision, written later.
+  if (!settings.thresholdOverrides && zpcr.persistedThresholds) {
+    settings.thresholdOverrides = zpcr.persistedThresholds;
+  }
+
+  // `--cq-method` outranks the file's own `zpcrweb.json` choice, like any flag over a default.
+  if (opts.cqMethod != null) {
+    if (!CQ_METHODS.some((m) => m.id === opts.cqMethod)) {
+      console.error(`unknown --cq-method ${opts.cqMethod}; one of ${CQ_METHODS.map((m) => m.id).join(", ")}`);
+      process.exit(1);
+    }
+    settings.cqMethod = opts.cqMethod;
+  }
+
+  const asked = step != null && !Number.isNaN(step) ? step : undefined;
+  // `melt` defaults to the run's first melt step rather than step 1: a protocol's melt is
+  // whichever ramp the instrument read across, and making the caller look it up first would be
+  // a lookup this already has to do. A run with no melt at all fails here, with the step list,
+  // rather than rendering an empty chart.
+  let activeStep;
+  if (cmd === "melt") {
+    const segments = meltSegments(zpcr);
+    if (segments.length === 0) {
+      const steps = zpcr.steps().map((s) => s.step).join(", ");
+      console.error(`${file}: no melt step — this run's read steps are ${steps || "(none)"}.`);
+      process.exit(1);
+    }
+    if (asked != null && !segments.some((s) => s.step === asked)) {
+      console.error(
+        `${file}: step ${asked} is not a melt — this run melts at step ` +
+          `${segments.map((s) => s.step).join(", ")}.`,
+      );
+      process.exit(1);
+    }
+    activeStep = asked ?? segments[0].step;
+  } else {
+    activeStep = asked ?? (zpcr.steps()[0]?.step ?? undefined);
+  }
+
+  const run = computeRunAnalysis(zpcr, settings, activeStep, password);
+
+  if (cmd === "results") {
+    process.stdout.write(analysisCsv(buildAnalysisRows(run, () => true)));
+    return;
+  }
+
+  const select = wellSelector(opts);
+  const { curves, dyeSpace, segment } =
+    cmd === "melt"
+      ? collectMeltCurves(zpcr, run, activeStep, {
+          select,
+          fluors: opts.fluors,
+          channels: opts.channels,
+        })
+      : collectCurves(run, { select, fluors: opts.fluors, channels: opts.channels });
+  const [width, height] = (opts.size ?? "1100x620")
+    .split("x")
+    .map((n) => Math.max(200, Number(n) || 0));
+  // `--size` is CSS pixels and `--dpr` multiplies them into device pixels, exactly as a browser
+  // on a retina display would: `--size 640x360 --dpr 2` is a 1280×720 file of the chart laid out
+  // at 640 wide, not the smaller-lettered chart `--size 1280x720` would lay out.
+  const dpr = Math.min(4, Math.max(1, Number(opts.dpr) || 1));
+  // An empty selection would render a blank rectangle — the app has a rail and an empty-state
+  // message to explain itself with, a PNG on disk has neither. Say so and write nothing.
+  if (curves.length === 0) {
+    console.error(
+      `${file}: nothing to plot — no ${dyeSpace ? "loaded well/dye pair" : "channel curve"} matches that selection.`,
+    );
+    process.exit(1);
+  }
+
+  const melting = cmd === "melt";
+  const out = opts.out ?? `${basename(file, extname(file))}-${melting ? "melt" : "curves"}.png`;
+  const { renderChartPng } = await import("./chartshot.mjs");
+  const view = opts.raw ? "raw" : "derivative";
+  const config = melting
+    ? meltChartConfig(curves, segment, { view, width, height, dpr })
+    : chartConfig(curves, { width, height, dpr });
+  writeFileSync(out, await renderChartPng(config, melting ? "melt" : "amplification"));
+  // A melt has no Cq to count; the Tm is the number that says whether a curve resolved, so it
+  // is what the line reports — the same "check this against your table" role the Cq count has.
+  const called = melting
+    ? curves.filter((c) => c.curve.tmC != null).length
+    : curves.filter((c) => c.analysis?.cq != null).length;
+  console.error(
+    `${out}: ${curves.length} curve${curves.length === 1 ? "" : "s"} ` +
+      `(${dyeSpace ? "dye space" : "channel space"}, ${called} with a ${melting ? "Tm" : "Cq"})` +
+      `, ${width}×${height}` +
+      (dpr === 1 ? "" : ` @${dpr}x = ${width * dpr}×${height * dpr}`),
+  );
+}
+
+main().catch((err) => {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+});

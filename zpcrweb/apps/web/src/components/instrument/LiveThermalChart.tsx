@@ -1,0 +1,102 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import uPlot from "uplot";
+import {
+  buildLiveThermalChart,
+  liveThermalData,
+  type LiveThermalTooltipData,
+} from "../../lib/uplot/liveThermalChart";
+import { elapsedLabel } from "../../lib/uplot/thermalChart";
+import type { GapFillState, LiveThermalHistory } from "../../state/useLiveThermalHistory";
+
+/** What the note under the chart says about the shaded spans, per `useLiveThermalHistory`'s state. */
+const GAP_NOTE: Record<GapFillState, string> = {
+  filled: "Shaded: no readings. Dashed: filled in from the instrument's run report.",
+  partial: "Shaded: no readings. Dashed: from the instrument's run report, where it reaches.",
+  checking: "Shaded: no readings. Asking the instrument for its run report…",
+  unavailable: "Shaded: no readings. The finished run will have the whole trace.",
+};
+
+/**
+ * Block temperature against elapsed time for the run in progress, in the Instrument rail's Status
+ * section — same uPlot lifecycle as `ThermalProfileChart` (rebuild on data change, `ResizeObserver`
+ * for sizing), but fed a growing live series instead of a finished run's `.alf` profile.
+ *
+ * The x-axis spans the whole expected run (`history.estimatedTotalS`), so the trace crosses a
+ * fixed frame as the run proceeds rather than always filling one.
+ */
+export function LiveThermalChart({ history }: { history: LiveThermalHistory }) {
+  const { samples, estimatedTotalS, gaps, fill, gapFill } = history;
+  const hostRef = useRef<HTMLDivElement>(null);
+  const plotRef = useRef<uPlot | null>(null);
+  const [tip, setTip] = useState<LiveThermalTooltipData | null>(null);
+
+  const data = useMemo(() => liveThermalData(samples, gaps, fill?.stretches ?? []), [samples, gaps, fill]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || samples.length === 0) return;
+    const rect = host.getBoundingClientRect();
+
+    const options = buildLiveThermalChart({
+      width: Math.max(160, Math.floor(rect.width)),
+      height: Math.max(100, Math.floor(rect.height)),
+      estimatedTotalS,
+      gaps,
+      onHover: setTip,
+    });
+
+    plotRef.current?.destroy();
+    plotRef.current = new uPlot(options, data, host);
+
+    return () => {
+      plotRef.current?.destroy();
+      plotRef.current = null;
+    };
+  }, [data, estimatedTotalS, gaps]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const ro = new ResizeObserver(() => {
+      const rect = host.getBoundingClientRect();
+      plotRef.current?.setSize({
+        width: Math.max(160, Math.floor(rect.width)),
+        height: Math.max(100, Math.floor(rect.height)),
+      });
+    });
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <>
+      <div className="chart thermal thermal--live">
+        <div className="chart__host" ref={hostRef} />
+        {samples.length === 0 && (
+          <div className="chart__empty mono">Waiting for the first status reply…</div>
+        )}
+        {tip && (
+          <div className="chart__tip" style={{ left: tip.left, top: tip.top }} role="status">
+            <div className="chart__tip-head">
+              <strong>{elapsedLabel(tip.atSeconds, true)}</strong>
+            </div>
+            <table className="chart__tip-tbl mono">
+              <tbody>
+                <tr>
+                  <td>{tip.source === "poll" ? "block" : "setpoint"}</td>
+                  <td>{tip.temperatureC.toFixed(1)} °C</td>
+                </tr>
+                {tip.source === "report" && (
+                  <tr>
+                    <td colSpan={2}>from the run report</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      {gapFill && <p className="thermal__gap-note">{GAP_NOTE[gapFill]}</p>}
+    </>
+  );
+}

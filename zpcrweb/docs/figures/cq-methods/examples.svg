@@ -1,0 +1,226 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1008" height="552" viewBox="0 0 1008 552" role="img" aria-label="Where each Cq method reports the Cq on six example curves" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>Where each Cq method reports the Cq on six example curves</title>
+<rect width="1008" height="552" fill="#fcfcfb"/>
+<text x="16.0" y="22.0" font-size="15" fill="#0b0b0b" text-anchor="start" font-weight="600">Where each method reports the Cq — six curves from the committed samples</text>
+<circle cx="21" cy="40" r="4.5" fill="none" stroke="#52514e" stroke-width="2"/>
+<text x="30.0" y="44.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">Single threshold</text>
+<circle cx="152.6" cy="40" r="4.5" fill="#2a78d6"/>
+<text x="161.6" y="44.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">Log takeoff</text>
+<circle cx="251.2" cy="40" r="4.5" fill="#eb6834"/>
+<text x="260.2" y="44.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">Log-space knee</text>
+<circle cx="369.59999999999997" cy="40" r="4.5" fill="#1baf7a"/>
+<text x="378.6" y="44.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">Curve fit</text>
+<text x="44.0" y="68.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="600">Clean amplification · A3 SYBR</text>
+<line x1="113.2" y1="76.0" x2="113.2" y2="266.0" stroke="#e6e5e1" />
+<text x="113.2" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">10</text>
+<line x1="190.2" y1="76.0" x2="190.2" y2="266.0" stroke="#e6e5e1" />
+<text x="190.2" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">20</text>
+<line x1="267.1" y1="76.0" x2="267.1" y2="266.0" stroke="#e6e5e1" />
+<text x="267.1" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">30</text>
+<line x1="344.0" y1="76.0" x2="344.0" y2="266.0" stroke="#e6e5e1" />
+<text x="344.0" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">40</text>
+<line x1="44.0" y1="229.8" x2="344.0" y2="229.8" stroke="#e6e5e1" />
+<text x="38.0" y="232.8" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">10</text>
+<line x1="44.0" y1="184.4" x2="344.0" y2="184.4" stroke="#e6e5e1" />
+<text x="38.0" y="187.4" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">100</text>
+<line x1="44.0" y1="139.1" x2="344.0" y2="139.1" stroke="#e6e5e1" />
+<text x="38.0" y="142.1" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">1e3</text>
+<line x1="44.0" y1="93.7" x2="344.0" y2="93.7" stroke="#e6e5e1" />
+<text x="38.0" y="96.7" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">1e4</text>
+<line x1="44.0" y1="266.0" x2="344.0" y2="266.0" stroke="#bdbcb6" />
+<line x1="44.0" y1="195.3" x2="344.0" y2="195.3" stroke="#52514e" stroke-dasharray="4 3" stroke-width="1"/>
+<text x="342.0" y="191.3" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">threshold</text>
+<polyline points="44.0,216.3 51.7,215.9 59.4,214.6 67.1,266.0 74.8,266.0 82.5,266.0 90.2,266.0 97.8,266.0 105.5,266.0 113.2,266.0 120.9,262.9 128.6,225.0 136.3,206.3 144.0,190.4 151.7,176.4 159.4,162.5 167.1,149.0 174.8,136.1 182.5,123.6 190.2,111.9 197.8,101.7 205.5,94.6 213.2,91.0 220.9,88.5 228.6,86.5 236.3,85.0 244.0,84.0 251.7,83.2 259.4,82.6 267.1,82.2 274.8,81.8 282.5,81.6 290.2,81.4 297.8,81.2 305.5,81.1 313.2,80.9 320.9,80.8 328.6,80.7 336.3,80.7 344.0,80.5" fill="none" stroke="#9a9993" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="132.4" cy="215.9" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2">
+<title>Log takeoff: Cq 12.49</title>
+</circle>
+<circle cx="129.2" cy="223.5" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2">
+<title>Log-space knee: Cq 12.08</title>
+</circle>
+<circle cx="134.9" cy="209.7" r="5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2">
+<title>Curve fit: Cq 12.82</title>
+</circle>
+<circle cx="141.0" cy="196.7" r="6" fill="none" stroke="#52514e" stroke-width="2">
+<title>Single threshold: Cq 13.61</title>
+</circle>
+<text x="48.0" y="90.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">threshold Cq 13.6; earlier by</text>
+<circle cx="51.0" cy="101.0" r="3" fill="#2a78d6"/>
+<text x="57.0" y="104.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">1.1</text>
+<circle cx="85.0" cy="101.0" r="3" fill="#eb6834"/>
+<text x="91.0" y="104.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">1.5</text>
+<circle cx="119.0" cy="101.0" r="3" fill="#1baf7a"/>
+<text x="125.0" y="104.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">0.8</text>
+<text x="368.0" y="68.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="600">Clean amplification · E9 FAM</text>
+<line x1="429.4" y1="76.0" x2="429.4" y2="266.0" stroke="#e6e5e1" />
+<text x="429.4" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">10</text>
+<line x1="497.5" y1="76.0" x2="497.5" y2="266.0" stroke="#e6e5e1" />
+<text x="497.5" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">20</text>
+<line x1="565.7" y1="76.0" x2="565.7" y2="266.0" stroke="#e6e5e1" />
+<text x="565.7" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">30</text>
+<line x1="633.9" y1="76.0" x2="633.9" y2="266.0" stroke="#e6e5e1" />
+<text x="633.9" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">40</text>
+<line x1="368.0" y1="253.0" x2="668.0" y2="253.0" stroke="#e6e5e1" />
+<line x1="368.0" y1="206.0" x2="668.0" y2="206.0" stroke="#e6e5e1" />
+<line x1="368.0" y1="159.1" x2="668.0" y2="159.1" stroke="#e6e5e1" />
+<line x1="368.0" y1="112.1" x2="668.0" y2="112.1" stroke="#e6e5e1" />
+<line x1="368.0" y1="266.0" x2="668.0" y2="266.0" stroke="#bdbcb6" />
+<line x1="368.0" y1="178.9" x2="668.0" y2="178.9" stroke="#52514e" stroke-dasharray="4 3" stroke-width="1"/>
+<text x="666.0" y="174.9" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">threshold</text>
+<polyline points="368.0,266.0 374.8,266.0 381.6,266.0 388.5,266.0 395.3,265.2 402.1,226.2 408.9,245.7 415.7,266.0 422.5,266.0 429.4,243.6 436.2,266.0 443.0,266.0 449.8,266.0 456.6,266.0 463.5,241.0 470.3,236.6 477.1,266.0 483.9,266.0 490.7,266.0 497.5,224.5 504.4,191.4 511.2,176.1 518.0,161.4 524.8,147.2 531.6,134.2 538.5,121.9 545.3,111.7 552.1,103.8 558.9,97.9 565.7,93.4 572.5,90.2 579.4,87.7 586.2,85.8 593.0,84.3 599.8,83.2 606.6,82.4 613.5,81.8 620.3,81.4 627.1,81.2 633.9,81.1 640.7,81.0 647.5,80.9 654.4,80.8 661.2,80.8 668.0,80.7" fill="none" stroke="#9a9993" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="501.0" cy="207.9" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2">
+<title>Log takeoff: Cq 20.50</title>
+</circle>
+<circle cx="499.8" cy="213.6" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2">
+<title>Log-space knee: Cq 20.33</title>
+</circle>
+<circle cx="504.6" cy="191.0" r="5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2">
+<title>Curve fit: Cq 21.03</title>
+</circle>
+<circle cx="509.5" cy="179.8" r="6" fill="none" stroke="#52514e" stroke-width="2">
+<title>Single threshold: Cq 21.76</title>
+</circle>
+<text x="372.0" y="90.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">threshold Cq 21.8; earlier by</text>
+<circle cx="375.0" cy="101.0" r="3" fill="#2a78d6"/>
+<text x="381.0" y="104.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">1.3</text>
+<circle cx="409.0" cy="101.0" r="3" fill="#eb6834"/>
+<text x="415.0" y="104.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">1.4</text>
+<circle cx="443.0" cy="101.0" r="3" fill="#1baf7a"/>
+<text x="449.0" y="104.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">0.7</text>
+<text x="692.0" y="68.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="600">Mid-run rise · C9 HEX</text>
+<line x1="753.4" y1="76.0" x2="753.4" y2="266.0" stroke="#e6e5e1" />
+<text x="753.4" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">10</text>
+<line x1="821.5" y1="76.0" x2="821.5" y2="266.0" stroke="#e6e5e1" />
+<text x="821.5" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">20</text>
+<line x1="889.7" y1="76.0" x2="889.7" y2="266.0" stroke="#e6e5e1" />
+<text x="889.7" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">30</text>
+<line x1="957.9" y1="76.0" x2="957.9" y2="266.0" stroke="#e6e5e1" />
+<text x="957.9" y="280.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">40</text>
+<line x1="692.0" y1="208.2" x2="992.0" y2="208.2" stroke="#e6e5e1" />
+<line x1="692.0" y1="144.9" x2="992.0" y2="144.9" stroke="#e6e5e1" />
+<line x1="692.0" y1="81.7" x2="992.0" y2="81.7" stroke="#e6e5e1" />
+<line x1="692.0" y1="266.0" x2="992.0" y2="266.0" stroke="#bdbcb6" />
+<line x1="692.0" y1="170.0" x2="992.0" y2="170.0" stroke="#52514e" stroke-dasharray="4 3" stroke-width="1"/>
+<text x="990.0" y="166.0" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">threshold</text>
+<polyline points="692.0,214.3 698.8,223.8 705.6,222.0 712.5,242.7 719.3,266.0 726.1,266.0 732.9,266.0 739.7,266.0 746.5,266.0 753.4,242.4 760.2,266.0 767.0,266.0 773.8,266.0 780.6,266.0 787.5,266.0 794.3,251.1 801.1,266.0 807.9,266.0 814.7,266.0 821.5,266.0 828.4,266.0 835.2,266.0 842.0,266.0 848.8,266.0 855.6,266.0 862.5,228.4 869.3,197.7 876.1,183.3 882.9,169.5 889.7,148.5 896.5,131.9 903.4,117.0 910.2,104.8 917.0,96.1 923.8,90.2 930.6,86.9 937.5,85.2 944.3,84.4 951.1,83.8 957.9,83.5 964.7,83.3 971.5,83.0 978.4,82.9 985.2,82.6 992.0,82.3" fill="none" stroke="#9a9993" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="871.7" cy="192.7" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2">
+<title>Log takeoff: Cq 27.35</title>
+</circle>
+<circle cx="866.1" cy="212.1" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2">
+<title>Log-space knee: Cq 26.53</title>
+</circle>
+<circle cx="873.6" cy="188.6" r="5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2">
+<title>Curve fit: Cq 27.63</title>
+</circle>
+<circle cx="882.6" cy="170.2" r="6" fill="none" stroke="#52514e" stroke-width="2">
+<title>Single threshold: Cq 28.95</title>
+</circle>
+<text x="696.0" y="90.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">threshold Cq 28.9; earlier by</text>
+<circle cx="699.0" cy="101.0" r="3" fill="#2a78d6"/>
+<text x="705.0" y="104.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">1.6</text>
+<circle cx="733.0" cy="101.0" r="3" fill="#eb6834"/>
+<text x="739.0" y="104.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">2.4</text>
+<circle cx="767.0" cy="101.0" r="3" fill="#1baf7a"/>
+<text x="773.0" y="104.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">1.3</text>
+<text x="44.0" y="310.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="600">Late rise · C9 SYBR</text>
+<line x1="113.2" y1="318.0" x2="113.2" y2="508.0" stroke="#e6e5e1" />
+<text x="113.2" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">10</text>
+<line x1="190.2" y1="318.0" x2="190.2" y2="508.0" stroke="#e6e5e1" />
+<text x="190.2" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">20</text>
+<line x1="267.1" y1="318.0" x2="267.1" y2="508.0" stroke="#e6e5e1" />
+<text x="267.1" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">30</text>
+<line x1="344.0" y1="318.0" x2="344.0" y2="508.0" stroke="#e6e5e1" />
+<text x="344.0" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">40</text>
+<line x1="44.0" y1="465.1" x2="344.0" y2="465.1" stroke="#e6e5e1" />
+<text x="38.0" y="468.1" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">10</text>
+<line x1="44.0" y1="416.1" x2="344.0" y2="416.1" stroke="#e6e5e1" />
+<text x="38.0" y="419.1" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">100</text>
+<line x1="44.0" y1="367.1" x2="344.0" y2="367.1" stroke="#e6e5e1" />
+<text x="38.0" y="370.1" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">1e3</text>
+<line x1="44.0" y1="318.1" x2="344.0" y2="318.1" stroke="#e6e5e1" />
+<text x="38.0" y="321.1" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">1e4</text>
+<line x1="44.0" y1="508.0" x2="344.0" y2="508.0" stroke="#bdbcb6" />
+<line x1="44.0" y1="427.9" x2="344.0" y2="427.9" stroke="#52514e" stroke-dasharray="4 3" stroke-width="1"/>
+<text x="342.0" y="423.9" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">threshold</text>
+<polyline points="44.0,454.9 51.7,446.9 59.4,445.2 67.1,449.0 74.8,461.2 82.5,468.8 90.2,487.1 97.8,508.0 105.5,508.0 113.2,508.0 120.9,508.0 128.6,508.0 136.3,508.0 144.0,508.0 151.7,508.0 159.4,508.0 167.1,508.0 174.8,508.0 182.5,508.0 190.2,508.0 197.8,508.0 205.5,508.0 213.2,508.0 220.9,508.0 228.6,508.0 236.3,464.6 244.0,508.0 251.7,476.8 259.4,465.1 267.1,452.7 274.8,437.2 282.5,425.7 290.2,413.0 297.8,399.3 305.5,385.5 313.2,371.7 320.9,358.2 328.6,345.1 336.3,333.1 344.0,322.9" fill="none" stroke="#9a9993" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="269.8" cy="447.3" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2">
+<title>Log takeoff: Cq 30.35</title>
+</circle>
+<circle cx="263.8" cy="458.1" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2">
+<title>Log-space knee: Cq 29.57</title>
+</circle>
+<circle cx="275.3" cy="436.4" r="5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2">
+<title>Curve fit: Cq 31.07</title>
+</circle>
+<circle cx="280.7" cy="428.4" r="6" fill="none" stroke="#52514e" stroke-width="2">
+<title>Single threshold: Cq 31.77</title>
+</circle>
+<text x="48.0" y="332.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">threshold Cq 31.8; earlier by</text>
+<circle cx="51.0" cy="343.0" r="3" fill="#2a78d6"/>
+<text x="57.0" y="346.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">1.4</text>
+<circle cx="85.0" cy="343.0" r="3" fill="#eb6834"/>
+<text x="91.0" y="346.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">2.2</text>
+<circle cx="119.0" cy="343.0" r="3" fill="#1baf7a"/>
+<text x="125.0" y="346.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">0.7</text>
+<text x="368.0" y="310.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="600">Humped baseline · A7 Cy5</text>
+<line x1="429.4" y1="318.0" x2="429.4" y2="508.0" stroke="#e6e5e1" />
+<text x="429.4" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">10</text>
+<line x1="497.5" y1="318.0" x2="497.5" y2="508.0" stroke="#e6e5e1" />
+<text x="497.5" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">20</text>
+<line x1="565.7" y1="318.0" x2="565.7" y2="508.0" stroke="#e6e5e1" />
+<text x="565.7" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">30</text>
+<line x1="633.9" y1="318.0" x2="633.9" y2="508.0" stroke="#e6e5e1" />
+<text x="633.9" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">40</text>
+<line x1="368.0" y1="436.4" x2="668.0" y2="436.4" stroke="#e6e5e1" />
+<line x1="368.0" y1="358.5" x2="668.0" y2="358.5" stroke="#e6e5e1" />
+<line x1="368.0" y1="508.0" x2="668.0" y2="508.0" stroke="#bdbcb6" />
+<line x1="368.0" y1="380.5" x2="668.0" y2="380.5" stroke="#52514e" stroke-dasharray="4 3" stroke-width="1"/>
+<text x="666.0" y="376.5" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">threshold</text>
+<polyline points="368.0,508.0 374.8,508.0 381.6,508.0 388.5,508.0 395.3,508.0 402.1,508.0 408.9,508.0 415.7,508.0 422.5,508.0 429.4,508.0 436.2,506.1 443.0,508.0 449.8,456.5 456.6,440.7 463.5,429.6 470.3,418.1 477.1,420.2 483.9,407.6 490.7,404.4 497.5,405.5 504.4,399.7 511.2,399.2 518.0,397.3 524.8,406.6 531.6,416.1 538.5,453.4 545.3,508.0 552.1,508.0 558.9,508.0 565.7,508.0 572.5,508.0 579.4,508.0 586.2,508.0 593.0,508.0 599.8,508.0 606.6,508.0 613.5,495.0 620.3,417.6 627.1,393.6 633.9,376.0 640.7,360.8 647.5,347.8 654.4,338.1 661.2,331.0 668.0,325.8" fill="none" stroke="#9a9993" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="616.1" cy="465.1" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2">
+<title>Log takeoff: Cq 37.39</title>
+</circle>
+<circle cx="618.4" cy="439.3" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2">
+<title>Log-space knee: Cq 37.72</title>
+</circle>
+<circle cx="624.6" cy="402.5" r="5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2">
+<title>Curve fit: Cq 38.63</title>
+</circle>
+<circle cx="631.8" cy="381.4" r="6" fill="none" stroke="#52514e" stroke-width="2">
+<title>Single threshold: Cq 39.69</title>
+</circle>
+<text x="372.0" y="332.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">threshold Cq 39.7; earlier by</text>
+<circle cx="375.0" cy="343.0" r="3" fill="#2a78d6"/>
+<text x="381.0" y="346.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">2.3</text>
+<circle cx="409.0" cy="343.0" r="3" fill="#eb6834"/>
+<text x="415.0" y="346.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">2.0</text>
+<circle cx="443.0" cy="343.0" r="3" fill="#1baf7a"/>
+<text x="449.0" y="346.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">1.1</text>
+<text x="692.0" y="310.0" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="600">Not a sigmoid · B7 SYBR</text>
+<line x1="761.2" y1="318.0" x2="761.2" y2="508.0" stroke="#e6e5e1" />
+<text x="761.2" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">10</text>
+<line x1="838.2" y1="318.0" x2="838.2" y2="508.0" stroke="#e6e5e1" />
+<text x="838.2" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">20</text>
+<line x1="915.1" y1="318.0" x2="915.1" y2="508.0" stroke="#e6e5e1" />
+<text x="915.1" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">30</text>
+<line x1="992.0" y1="318.0" x2="992.0" y2="508.0" stroke="#e6e5e1" />
+<text x="992.0" y="522.0" font-size="10" fill="#8a8984" text-anchor="middle" font-weight="400">40</text>
+<line x1="692.0" y1="459.4" x2="992.0" y2="459.4" stroke="#e6e5e1" />
+<line x1="692.0" y1="357.3" x2="992.0" y2="357.3" stroke="#e6e5e1" />
+<line x1="692.0" y1="508.0" x2="992.0" y2="508.0" stroke="#bdbcb6" />
+<line x1="692.0" y1="381.8" x2="992.0" y2="381.8" stroke="#52514e" stroke-dasharray="4 3" stroke-width="1"/>
+<text x="990.0" y="377.8" font-size="10" fill="#8a8984" text-anchor="end" font-weight="400">threshold</text>
+<polyline points="692.0,508.0 699.7,508.0 707.4,508.0 715.1,508.0 722.8,503.0 730.5,508.0 738.2,504.7 745.8,508.0 753.5,508.0 761.2,508.0 768.9,447.6 776.6,452.4 784.3,458.2 792.0,508.0 799.7,508.0 807.4,508.0 815.1,508.0 822.8,508.0 830.5,328.2 838.2,334.2 845.8,340.4 853.5,347.2 861.2,356.7 868.9,371.4 876.6,385.5 884.3,407.8 892.0,508.0 899.7,508.0 907.4,508.0 915.1,508.0 922.8,508.0 930.5,508.0 938.2,508.0 945.8,508.0 953.5,508.0 961.2,508.0 968.9,508.0 976.6,508.0 984.3,508.0 992.0,508.0" fill="none" stroke="#9a9993" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="824.3" cy="471.7" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2">
+<title>Log-space knee: Cq 18.20</title>
+</circle>
+<circle cx="825.7" cy="440.5" r="6" fill="none" stroke="#52514e" stroke-width="2">
+<title>Single threshold: Cq 18.38</title>
+</circle>
+<text x="696.0" y="332.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">threshold Cq 18.4; earlier by</text>
+<circle cx="699.0" cy="343.0" r="3" fill="#2a78d6"/>
+<text x="705.0" y="346.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">0.0</text>
+<circle cx="733.0" cy="343.0" r="3" fill="#eb6834"/>
+<text x="739.0" y="346.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">0.2</text>
+<circle cx="767.0" cy="343.0" r="3" fill="#1baf7a"/>
+<text x="773.0" y="346.0" font-size="10" fill="#52514e" text-anchor="start" font-weight="400">0.0</text>
+</svg>

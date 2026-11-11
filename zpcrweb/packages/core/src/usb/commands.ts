@@ -1,0 +1,259 @@
+/**
+ * Channel 1 — the ASCII command language (`usb.md` §3).
+ *
+ * A channel-1 payload is a plain command line: ASCII, CR/LF-terminated on the way out, and a
+ * response on the way back that ends in a 4-digit result code. The only structural subtlety is
+ * that there are **two** response shapes, and which one a command uses is a property of the
+ * command, not of the reply:
+ *
+ * - Commands with something to report separate value from code with a semicolon — `*IDN?` →
+ *   `BIO-RAD…,2.0.231.0;0000`, and even an empty value keeps the separator (`ERRORLIST A` → `;0000`).
+ * - Pure action commands have no return-value slot at all and answer with the bare code, `0000`.
+ *
+ * {@link parseResponse} splits at the **last** semicolon rather than the first, because a value
+ * may itself be semicolon-delimited — `STATUS?` is twenty such fields — and a leading-split parser
+ * would report a block temperature as the whole reply's value.
+ */
+
+/** Success. Neither reference capture ever provoked a non-zero code, so what a real failure looks
+ * like beyond "not this" is unconfirmed (`usb.md` §3). */
+export const OK_CODE = "0000";
+
+export interface CfxResponse {
+  /** The response's value, or `null` for a pure action command that has no value slot. */
+  value: string | null;
+  /** `value` split on `;`. Empty for an action command. `STATUS?`'s twenty fields arrive here. */
+  fields: string[];
+  /** The trailing 4-digit result code. */
+  code: string;
+  /** `code === "0000"`. */
+  ok: boolean;
+  /** The reply exactly as received, minus its trailing newline. */
+  raw: string;
+}
+
+const DECODER = new TextDecoder("latin1");
+const ENCODER = new TextEncoder();
+
+/** Encode a command line as a channel-1 payload. The `\r\n` terminator is added here — every
+ * request in both reference captures carries it, so no caller should be passing its own. */
+export function encodeCommand(command: string): Uint8Array {
+  return ENCODER.encode(`${command}\r\n`);
+}
+
+/**
+ * Reject an argument that would change the *shape* of the command line it is interpolated into.
+ *
+ * Command lines are built inside `CfxDevice` from literals, so the only caller-supplied text that
+ * reaches the wire is an argument — a filesystem path. A CR or LF in one would terminate the line
+ * early and frame whatever follows as a second command of the caller's choosing, which is exactly
+ * the arbitrary-command channel the client deliberately doesn't offer. The rest of the C0 range
+ * and anything non-ASCII goes too: the payload is ASCII by specification (§3), so a byte outside
+ * it is a mistake caught here rather than an unexplained instrument error later.
+ */
+export function assertCommandArgument(what: string, value: string): void {
+  const bad = /[^\x20-\x7e]/.exec(value);
+  if (bad) {
+    const code = bad[0]!.codePointAt(0)!.toString(16).padStart(2, "0");
+    throw new Error(`${what} contains a character that cannot go in a command line (0x${code})`);
+  }
+}
+
+/**
+ * Parse a channel-1 response payload.
+ *
+ * `latin1` rather than UTF-8 on purpose: the payload is ASCII by specification, and a strict
+ * UTF-8 decode would turn a byte the firmware never meant as text into U+FFFD. Decoding
+ * byte-for-byte keeps a surprising reply diagnosable instead of silently lossy.
+ */
+export function parseResponse(payload: Uint8Array): CfxResponse {
+  const raw = DECODER.decode(payload).replace(/\r?\n$/, "");
+  const cut = raw.lastIndexOf(";");
+  if (cut < 0) {
+    // Action-command shape: the whole reply is the code.
+    return { value: null, fields: [], code: raw, ok: raw === OK_CODE, raw };
+  }
+  const value = raw.slice(0, cut);
+  const code = raw.slice(cut + 1);
+  return { value, fields: value.split(";"), code, ok: code === OK_CODE, raw };
+}
+
+/** Thrown when the instrument answers with a non-success code. */
+export class CfxCommandError extends Error {
+  constructor(
+    readonly command: string,
+    readonly response: CfxResponse,
+  ) {
+    super(`${command} failed with code ${response.code}: ${response.raw}`);
+    this.name = "CfxCommandError";
+  }
+}
+
+/**
+ * Every directory on the instrument known to hold something worth browsing (`usb.md` §5).
+ *
+ * **This list is the browser's whole reach, and it can only be written by hand.** Listings cover
+ * files only and nothing else enumerates a directory, so a subdirectory is found by already
+ * knowing its name — which is how CFX Manager does it too: the `usb-basic` capture lists
+ * `Real-Time Data` and `Logs` by path, and that capture is how this project knows they exist.
+ *
+ * `\Storage Card` is the volume root and has no listing of its own, holding nothing but the
+ * directories below it, so `GETFILESLEN` reports it empty (measured). It is kept here so the
+ * browser shows the shape of the filesystem rather than silently starting one level down.
+ */
+export const CFX_DIRECTORIES = [
+  { path: "\\Storage Card", label: "Storage Card" },
+  { path: "\\Storage Card\\CurrentRun", label: "Current run" },
+  { path: "\\Storage Card\\PCRunReport", label: "Run reports" },
+  // A `<run>.zpcr` and a `<run>.txt` per completed run — where CFX Manager gets a finished run from.
+  { path: "\\Storage Card\\Real-Time Data", label: "Completed runs" },
+  // Five instrument logs: `DebugLog.txt`, `SystemErrorLog.txt` and the like.
+  { path: "\\Storage Card\\Logs", label: "Instrument logs" },
+] as const;
+
+/**
+ * `SetDateTime 07/31/2026,09:33:04,PM,-04:00` — the instrument's clock *and* its zone offset, from
+ * one `Date` (`usb.md` §3).
+ *
+ * Why the zone matters more than the time: the instrument stamps every `RunStartTime` and
+ * `.Plateread` `DATETIME` "GMT", but what it writes is its local clock minus the offset it was
+ * last told — and left alone it assumes Pacific, so a run on an Eastern bench lands four hours in
+ * the future (`alf.md` §4.1). CFX Manager sends this on connect with the PC's current offset,
+ * which is what keeps its files right; a client that doesn't gets the stale offset.
+ *
+ * The fields are the host's **local** wall clock, 12-hour with a separate `AM`/`PM`, and the
+ * offset is `getTimezoneOffset()` with its sign flipped — JavaScript counts minutes *behind* UTC
+ * as positive, the command wants `-04:00` for a zone four hours behind.
+ */
+export function setDateTimeCommand(now: Date): string {
+  const d2 = (n: number): string => String(n).padStart(2, "0");
+  const h24 = now.getHours();
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  const date = `${d2(now.getMonth() + 1)}/${d2(now.getDate())}/${now.getFullYear()}`;
+  const time = `${d2(h12)}:${d2(now.getMinutes())}:${d2(now.getSeconds())}`;
+  const offsetMin = -now.getTimezoneOffset();
+  const sign = offsetMin < 0 ? "-" : "+";
+  const abs = Math.abs(offsetMin);
+  const tz = `${sign}${d2(Math.floor(abs / 60))}:${d2(abs % 60)}`;
+  return `SetDateTime ${date},${time},${h24 < 12 ? "AM" : "PM"},${tz}`;
+}
+
+/**
+ * How much a command in {@link CFX_COMMANDS} is actually known to do.
+ *
+ * The distinction is load-bearing rather than decorative. `usb.md` documents only what real
+ * traffic demonstrated, so a client wanting a button for something the captures never exercised
+ * would be guessing at a command name. Recording that per command lets the UI say so instead of
+ * presenting a guess as a feature, and keeps any guesses in one list rather than scattered
+ * through call sites.
+ *
+ * Every entry currently in {@link CFX_COMMANDS} is `observed` — lid close and the indicator were
+ * briefly carried here as guesses, until re-reading `usb-basic` found both (`LID CLOSE`, and
+ * `BLOCKID` for the indicator). The mechanism stays because the next action command added will
+ * need it, and because "how do we know?" is worth being able to answer per command.
+ */
+export type CommandConfidence =
+  /** Observed in a reference capture, or exercised against a live instrument by this library. */
+  | "observed"
+  /** Plausible by symmetry with an observed command, but never seen. May simply error. */
+  | "unverified";
+
+export interface CfxCommandSpec {
+  /** The literal command line, or a builder for one that takes an argument. */
+  command: string;
+  label: string;
+  confidence: CommandConfidence;
+  /**
+   * Why it is believed to do what the label says — provenance for whoever reads or changes this
+   * table, not UI copy. It cites `usb.md` sections, which mean nothing to an operator, so clients
+   * shouldn't show it as a button tooltip; the labels say what the buttons do.
+   */
+  note?: string;
+  /** True when running it changes instrument state rather than just reporting it. */
+  actuates?: boolean;
+  /**
+   * True when sending it *while a run is cycling* changes that run — its results, or its thermal
+   * profile — rather than merely doing something to the instrument alongside it.
+   *
+   * A fact about the command, recorded here beside its provenance rather than left for each client
+   * to know: `PROCEED` advances the protocol past the step it is on (§7.5, measured), and
+   * `LID OPEN` lifts the heated lid off a plate mid-cycle (§3). Flashing the indicator or closing
+   * a lid that is already closed does neither.
+   *
+   * What a client does about it is the client's business — the web app asks for a second click —
+   * but *which* commands warrant it is not a judgement worth making twice, and a new command added
+   * to this table has to answer the question to be written down at all.
+   */
+  disruptsRun?: boolean;
+}
+
+/**
+ * The action commands a client might reasonably offer as a button, with their provenance.
+ *
+ * Queries are not listed here — they are ordinary calls on {@link CfxDevice} and their results are
+ * typed. This list exists for the ones that *do* something and are complete in one command:
+ * `CfxDevice.runAction` takes a name from this table, and there is no public way to send a command
+ * line the library didn't build. Offering a new action means adding an entry here, where its
+ * provenance is recorded alongside it.
+ *
+ * **`CANCEL`, `PAUSE` and `RESUME` are deliberately absent.** Each of them is a named method on
+ * {@link CfxDevice} instead, because none of the three is complete in one command. `CANCEL` sent
+ * and forgotten is the measured bug `usb.md` §7.8 exists for — in the start window it is answered
+ * `0000` and ignored, so a button wired straight to it reports success over a run that goes on
+ * cycling — and §7.8 has four more rules around it besides. `PAUSE`/`RESUME` are two halves of one
+ * state a caller has to read back (§7.9). A generic button that fires a word and prints the result
+ * code is right for a lid and wrong for these.
+ */
+export type CfxCommandName = "indicator" | "lidOpen" | "lidClose" | "skipStep";
+
+/**
+ * Annotated as a plain `Record`, deliberately — not `as const satisfies`.
+ *
+ * Inferring the entries would narrow each `confidence` to the literal it holds today, and with
+ * every command currently `"observed"` a `=== "unverified"` test elsewhere becomes provably false
+ * and TypeScript rejects it as dead code. That is technically correct and exactly wrong here: that
+ * test is what makes an unverified command announce itself in the UI when one is added, so it has
+ * to keep compiling while none exists. The name union above is spelled out for the same reason —
+ * it's the one thing `keyof typeof` was buying.
+ */
+export const CFX_COMMANDS: Record<CfxCommandName, CfxCommandSpec> = {
+  indicator: {
+    command: "BLOCKID 1",
+    label: "Flash indicator",
+    confidence: "observed",
+    note:
+      "usb.md §3 — 'block identify', the function that flashes a block's indicator so an operator " +
+      "can tell which unit is being addressed. The argument is the block number; BLOCKCOUNT? " +
+      "reports how many exist (1 on a CFX96).",
+    actuates: true,
+  },
+  lidOpen: {
+    command: "LID OPEN",
+    label: "Open lid",
+    confidence: "observed",
+    note: "usb.md §3.",
+    actuates: true,
+    // Lifting the lid off a plate mid-run: the seal goes, the wells cool, and the run cycles on
+    // regardless.
+    disruptsRun: true,
+  },
+  lidClose: {
+    command: "LID CLOSE",
+    label: "Close lid",
+    confidence: "observed",
+    note: "usb.md §3.",
+    actuates: true,
+  },
+  skipStep: {
+    command: "PROCEED",
+    label: "Skip step",
+    confidence: "observed",
+    note:
+      "usb.md §7.5 — advances the run past the step it is currently on. Measured: sent 215 s " +
+      "into a 3-minute hold the block had only just reached temperature for, it moved the run " +
+      "to step 2 within 1.1 s. Despite the name it neither starts nor resumes anything — an " +
+      "earlier reading of the capture had it as a start confirmation, which it is not.",
+    actuates: true,
+    disruptsRun: true,
+  },
+};

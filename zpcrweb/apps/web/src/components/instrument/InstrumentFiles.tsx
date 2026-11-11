@@ -1,0 +1,235 @@
+/**
+ * Browse and retrieve the instrument's own filesystem.
+ *
+ * The directories shown are a fixed list (core's `CFX_DIRECTORIES`), not a walk of the tree: the
+ * instrument's listings name files only, so a subdirectory can't be discovered, only asked for by
+ * name — which is also all CFX Manager does.
+ *
+ * **Retrieve** saves a single file to disk rather than loading it into the app: most of what lives
+ * on the instrument are the *parts* of a run — individual `.Plateread`s, the `.Dcal` set,
+ * `RunInfo.xml`, the `.pltd`/`.prcl` pair. A file that is whole in itself gets **Open** besides —
+ * a completed run's `.zpcr` from `Real-Time Data`, or an `.alf` run report — which fetches it and
+ * adds it exactly as a dropped file would be.
+ *
+ * A whole directory is a different matter, and is what **Open run** does: a `.zpcr` *is* a ZIP of
+ * a run directory, so pulling every file yields a real run — not a reconstruction — which then goes
+ * through exactly the same validate/persist path as a dropped file (`zpcrNameForRunFolder`, then
+ * the store's `addRunArchive`; whether it is stored as a ZIP or kept open depends on whether the
+ * run has ended, and is the store's business, not this view's). The button is offered for any
+ * directory whose listing has a `RunInfo.xml`, which is what makes it a run rather than an
+ * arbitrary folder.
+ */
+import { useState } from "react";
+import { CFX_DIRECTORIES, zpcrNameForRunFolder, type ZpcrArchive } from "@zpcrweb/core";
+import { downloadBytes } from "../../lib/download";
+import type { CfxDeviceHandle } from "../../state/useCfxDevice";
+
+/** The file that makes a directory a run — and the one `parseZpcr` refuses an archive without. */
+const RUNINFO_NAME = "RunInfo.xml";
+
+/** The instrument's files the app opens on their own. Not every kind `fileKindFromName` names: a
+ * `.txt` would be guessed a protocol, and the instrument's are logs and run notes. */
+function opensAlone(name: string): boolean {
+  return /\.(zpcr|alf)$/i.test(name);
+}
+
+/** Group a flat listing the way the Raw view groups a `.zpcr`'s entries, so a 42-entry
+ * `CurrentRun` reads as a handful of kinds rather than one long alphabetical wall. */
+function groupOf(name: string): string {
+  if (/\.zpcr$/i.test(name)) return "Runs";
+  if (/log\.txt$/i.test(name)) return "Logs";
+  if (/\.Plateread$/i.test(name)) return "Plate reads";
+  if (/\.Dcal$/i.test(name)) return "Calibration";
+  if (/\.(pltd|prcl)$/i.test(name)) return "Plate & protocol";
+  if (/\.(xml|txt)$/i.test(name)) return "Metadata";
+  if (/\.alf$/i.test(name)) return "Run report";
+  return "Other";
+}
+
+const GROUP_ORDER = [
+  "Runs",
+  "Metadata",
+  "Plate & protocol",
+  "Plate reads",
+  "Run report",
+  "Calibration",
+  "Logs",
+  "Other",
+];
+
+export function InstrumentFiles({
+  instrument,
+  onOpenRun,
+  onOpenFile,
+}: {
+  instrument: CfxDeviceHandle;
+  /** Hand the assembled `.zpcr` to the app, exactly as if it had been dropped on the drop zone. */
+  onOpenRun: (name: string, archive: ZpcrArchive) => Promise<void> | void;
+  /** The same for one file the instrument already holds whole — see {@link opensAlone}. */
+  onOpenFile: (name: string, bytes: Uint8Array) => Promise<void> | void;
+}) {
+  const { directories, busy, connection } = instrument;
+  const connected = connection === "connected";
+  const [openError, setOpenError] = useState<string | null>(null);
+
+  const retrieve = async (dir: string, name: string) => {
+    const bytes = await instrument.fetchFile(dir, name);
+    if (bytes) downloadBytes(name, bytes);
+  };
+
+  const openFile = async (dir: string, name: string) => {
+    setOpenError(null);
+    const bytes = await instrument.fetchFile(dir, name);
+    // As in `openRun`: `undefined` is a failed fetch, already reported by the rail.
+    if (!bytes) return;
+    try {
+      await onOpenFile(name, bytes);
+    } catch (e) {
+      setOpenError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const openRun = async (dir: string, names: string[]) => {
+    setOpenError(null);
+    const files = await instrument.fetchDirectoryFiles(dir, names);
+    // `undefined` means the fetch itself failed, which the rail already reports.
+    if (!files) return;
+    try {
+      await onOpenRun(zpcrNameForRunFolder(files), files);
+    } catch (e) {
+      setOpenError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    // Collapsed by default: browsing the instrument's storage is a deliberate act, and a listed
+    // `CurrentRun` is long enough to bury the protocol panel above it when it isn't wanted.
+    <details className="instrument__panel instrument__panel--collapsible">
+      <summary className="instrument__panelhead">
+        <h2 className="instrument__paneltitle">
+          <span className="rail__chevron" aria-hidden="true">
+            ▸
+          </span>
+          Files on the instrument
+        </h2>
+        <button
+          className="btn btn--sm"
+          disabled={!connected || !!busy}
+          // No toggle guard needed: a <button> inside a <summary> is its own activation target,
+          // so clicking it never folds the panel.
+          onClick={() => void instrument.refreshAll()}
+        >
+          Refresh all
+        </button>
+      </summary>
+
+      {openError && <div className="rail__note">Couldn't open it: {openError}</div>}
+
+      {!connected ? (
+        <div className="instrument__empty mono">Connect to browse the instrument's storage.</div>
+      ) : (
+        <div className="instrument__dirs">
+          {CFX_DIRECTORIES.map((d) => {
+            const dir = directories[d.path];
+            const groups = new Map<string, string[]>();
+            for (const name of dir?.names ?? []) {
+              const g = groupOf(name);
+              if (!groups.has(g)) groups.set(g, []);
+              groups.get(g)!.push(name);
+            }
+            // Openable only when the listing actually holds a run: a directory of loose files
+            // would zip into an archive `parseZpcr` rejects.
+            const isRun = !!dir?.listed && dir.names.some((n) => n.toLowerCase() === RUNINFO_NAME.toLowerCase());
+            return (
+              <div key={d.path} className="instrument__dir">
+                <div className="instrument__dirhead">
+                  <div>
+                    <span className="instrument__dirname">{d.label}</span>
+                    <span className="instrument__dirpath mono">{d.path}</span>
+                  </div>
+                  <div className="instrument__dirbtns">
+                    {isRun && (
+                      <button
+                        className="btn btn--sm btn--primary"
+                        disabled={!!busy}
+                        onClick={() => void openRun(d.path, dir!.names)}
+                        title={`Retrieve all ${dir!.names.length} files and open them as one .zpcr`}
+                      >
+                        Open run
+                      </button>
+                    )}
+                    <button
+                      className="btn btn--sm"
+                      disabled={!!busy}
+                      onClick={() => void instrument.refreshDirectory(d.path)}
+                    >
+                      {dir ? "Reload" : "List"}
+                    </button>
+                  </div>
+                </div>
+
+                {!dir ? (
+                  <div className="instrument__empty mono">Not listed yet.</div>
+                ) : dir.status === "empty" ? (
+                  // A real answer about this path, not a failure: listings cover files only, so a
+                  // directory holding nothing but subdirectories reports itself empty.
+                  <div className="instrument__empty mono">
+                    No files here. Subdirectories aren't listed.
+                  </div>
+                ) : !dir.listed ? (
+                  // Not a soft failure: without a length the instrument would replay whichever
+                  // directory was listed last, so showing nothing is the only correct answer.
+                  <div className="rail__note">
+                    {dir.status === "missing"
+                      ? "The instrument reports no such directory at this path."
+                      : "This directory can't be listed: GETFILESLEN answered with a binary payload this app doesn't recognize."}{" "}
+                    Nothing is shown because <code>LISTALLFILES</code> only ever returns the last
+                    listing that succeeded — so any names here would belong to a different
+                    directory.
+                  </div>
+                ) : dir.names.length === 0 ? (
+                  <div className="instrument__empty mono">Empty.</div>
+                ) : (
+                  <>
+                    <div className="instrument__dirmeta mono">
+                      {dir.names.length} files · listing {dir.listingBytes} bytes
+                    </div>
+                    {GROUP_ORDER.filter((g) => groups.has(g)).map((g) => (
+                      <div key={g} className="instrument__group">
+                        <div className="instrument__grouptitle">{g}</div>
+                        <ul className="instrument__files">
+                          {groups.get(g)!.map((name) => (
+                            <li key={name} className="instrument__file">
+                              <span className="instrument__filename mono">{name}</span>
+                              {opensAlone(name) && (
+                                <button
+                                  className="btn btn--sm btn--primary"
+                                  disabled={!!busy}
+                                  onClick={() => void openFile(d.path, name)}
+                                  title={`Retrieve ${name} and open it`}
+                                >
+                                  Open
+                                </button>
+                              )}
+                              <button
+                                className="btn btn--sm"
+                                disabled={!!busy}
+                                onClick={() => void retrieve(d.path, name)}
+                              >
+                                Retrieve
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </details>
+  );
+}

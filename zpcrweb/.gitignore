@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+coverage/
+.claude/worktrees/
+.claude/settings.local.json
+secrets.json
+tools/.uishot/
+.vscode/

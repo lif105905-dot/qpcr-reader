@@ -1,0 +1,1393 @@
+/**
+ * {@link CfxDevice} — a client for a CFX96 / C1000 Touch over its own USB protocol (`usb.md`).
+ *
+ * Environment-free: it talks to a {@link UsbDeviceLike}, which a browser `USBDevice` and
+ * node-usb's WebUSB device both satisfy without an adapter (see `transport.ts`). Nothing in this
+ * file, or anything it imports, references `navigator`, `window` or `node:*`.
+ *
+ * ## Two design points worth knowing before changing anything here
+ *
+ * **1. Reading is a pump, not a per-command read.** The naive shape — write a command, then
+ * `transferIn` until the reply is complete — looks right and is wrong, because the IN endpoint is
+ * shared by channels the host never asked for. Channel 2 carries 274 unsolicited messages across
+ * the two reference captures (`usb.md` §2), so a per-command reader eventually returns a channel-2
+ * payload as if it were the answer to a channel-1 query, and every subsequent reply is off by one.
+ * Instead one background loop owns the endpoint, reassembles the byte stream (`FrameReassembler`),
+ * and routes each complete message by channel. Channel-1 messages answer queued commands in order;
+ * everything else is surfaced as traffic and otherwise ignored. This is also what lets a debug
+ * view show *all* traffic rather than only what a command asked for.
+ *
+ * **2. Commands are serialized, and some must be serialized in groups.** The protocol has no
+ * request ids — a reply is matched to a request purely by arrival order — so exactly one command
+ * may be outstanding at a time. Two callers polling at once would otherwise each receive the
+ * other's answer.
+ *
+ * Beyond that, some operations are *stateful pairs* that a second caller must not be able to
+ * interleave with. `LISTALLFILES` is the sharp case: it returns whatever listing the preceding
+ * `GETFILESLEN` buffered and **ignores its own path argument** (measured — see
+ * {@link CfxDevice.listFiles}), so `GETFILESLEN A` / `GETFILESLEN B` / `LISTALLFILES A` answers
+ * for B. `sequence` therefore holds the channel across several commands, and every multi-command
+ * operation here runs inside one.
+ *
+ * Arrival order is also why **a connection has to start in step**. A reply the instrument wrote
+ * for the *previous* connection — a `STATUS?` poll answered after the page reloaded or the user
+ * pressed Disconnect — is still sitting in its pipe when the next connection opens, and it would
+ * be read first and matched to the first command sent, with every reply after it off by one: an
+ * Identity panel reporting a status line as the model and a file listing as the firmware
+ * (observed). The first command of every connection is `*IDN?`, so {@link CfxDevice.identify}
+ * attaches an {@link Pending.accept} check and {@link dispatch} drops any channel-1 reply that
+ * does not look like an identity — logged, and surfaced as unsolicited traffic — until the real
+ * one arrives. Nothing else needs it: once `*IDN?` has been answered the channel is in step, and
+ * it stays so because exactly one command is outstanding at a time.
+ *
+ * **3. Command lines are built here and nowhere else.** Every public method on this class is a
+ * *named operation* — `status()`, `listFiles(dir)`, `runAction("lidOpen")` — and the machinery
+ * that turns one into a command line (`send`/`command`/`tryCommand`/`sequence`) is private. There
+ * is deliberately no "send this string" escape hatch: the command channel drives an instrument
+ * that heats a block and moves a lid, one where a typo is indistinguishable from an intended
+ * command and the vocabulary is reverse-engineered rather than specified (`usb.md` §3), so an
+ * arbitrary line is a hazard with no matching benefit. Adding a capability means adding a method
+ * here — or, for an action with no return value, an entry in {@link CFX_COMMANDS} — which is also
+ * where its reply gets parsed into something typed and its provenance recorded.
+ *
+ * The one thing a caller still supplies verbatim is a *path*, which the filesystem operations
+ * interpolate into a command line. {@link assertCommandArgument} keeps that from becoming the
+ * escape hatch by the back door: a path carrying a CR or LF would otherwise frame a second,
+ * caller-chosen command line after the first.
+ */
+import {
+  FrameReassembler,
+  MAX_MESSAGE_PAYLOAD,
+  REQUEST_HEADER,
+  encodeFrame,
+  type CfxMessage,
+} from "./frame.js";
+import {
+  CFX_COMMANDS,
+  CfxCommandError,
+  assertCommandArgument,
+  encodeCommand,
+  parseResponse,
+  setDateTimeCommand,
+  type CfxCommandName,
+  type CfxResponse,
+} from "./commands.js";
+import {
+  isPaused,
+  parseIdentity,
+  parseRtStatus,
+  parseStatus,
+  type CfxDeviceInfo,
+  type CfxIdentity,
+  type CfxRtStatus,
+  type CfxStatus,
+} from "./status.js";
+import { cfxFileCrc, formatCfxFileCrc } from "./crc.js";
+import { CFX_CURRENT_RUN_DIR, CFX_RUN_REPORT_DIR, type RunPlan } from "./runPlan.js";
+import { usbTrafficText } from "../usbTraffic.js";
+import {
+  CFX_CONFIGURATION,
+  CFX_ENDPOINT_IN,
+  CFX_ENDPOINT_OUT,
+  CFX_INTERFACE,
+  CFX_READ_CHUNK,
+  transferBytes,
+  type UsbDeviceLike,
+  type UsbInTransferResultLike,
+} from "./transport.js";
+
+/** The ASCII command channel (`usb.md` §3). */
+const CHANNEL_ASCII = 1;
+
+/**
+ * How many consecutive `transferIn` failures the read pump tolerates before giving up.
+ *
+ * A single "A transfer error has occurred" is usually one glitched USB transaction — Chrome
+ * throws it for a stalled or babbling endpoint, not only for a genuine unplug — and the endpoint
+ * is usually readable again on the very next call. Killing the whole connection (and with it every
+ * in-flight command and the UI's `connected` state) on the first one is a worse trade than a short
+ * retry, so only a *run* of failures, or the device itself reporting it's no longer open, is
+ * treated as fatal.
+ */
+const READ_ERROR_RETRY_LIMIT = 4;
+/** Pause between retries, so a still-settling endpoint isn't hammered immediately. */
+const READ_ERROR_RETRY_DELAY_MS = 200;
+
+/**
+ * Whether a `transferIn` rejection is worth retrying on the *same* device handle.
+ *
+ * The retry loop above was built for one specific failure — a stalled or babbling endpoint, which
+ * Chrome reports as `NetworkError: A transfer error has occurred` and which really is readable
+ * again on the next call. Not every rejection is that shape, and the difference decides whether
+ * retrying can possibly work:
+ *
+ * - **`Cancelled`** — the platform tore down the transfer parked on the endpoint. Any holder
+ *   closing, resetting or releasing the device does it, as does an OS suspend or a re-enumeration
+ *   Chrome hasn't yet reflected in `opened`. The handle, not the endpoint, is what's broken, so a
+ *   retry re-issues a read on a pipe that no longer exists.
+ * - **`NotFoundError` / "device was disconnected"** — the device is gone outright.
+ * - **`InvalidStateError` / "must be opened first"** — the handle is closed underneath us.
+ *
+ * For all three the recovery is a *new connection*, which is the caller's business, not this
+ * loop's: reporting them as fatal immediately hands off to whoever reconnects (in the web app,
+ * `CfxSession`'s reconnect loop) instead of spending {@link READ_ERROR_RETRY_LIMIT} ×
+ * {@link READ_ERROR_RETRY_DELAY_MS} failing the same way four more times first. Anything
+ * unrecognized keeps the benefit of the doubt and is retried, since the retry is bounded anyway.
+ */
+function isUnrecoverableTransferError(err: Error): boolean {
+  const text = `${err.name} ${err.message}`;
+  return /cancell?ed|NotFoundError|device was disconnected|InvalidStateError|must be opened/i.test(
+    text,
+  );
+}
+
+function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** The deposit report for a run that never showed up in `STATUS?` — its files were held back
+ * rather than written into a folder that is still the previous run's. Shown under "The run
+ * started. Its files, though:", so it names the files rather than repeating that. */
+export function runNotStartedNote(plan: RunPlan): string {
+  return (
+    `${plan.uploads.map((u) => u.name).join(", ")} weren't copied: the instrument hadn't shown ` +
+    `the run as started, so its run folder may still have held the previous run.`
+  );
+}
+
+/** One decoded message crossing the wire, as handed to {@link CfxDeviceOptions.onTraffic}. */
+export interface CfxTrafficEvent {
+  direction: "out" | "in";
+  channel: number;
+  /** Payload bytes exactly as framed. */
+  payload: Uint8Array;
+  /** The payload decoded as latin1 when it is text, else `null` — a binary channel-0/2 message,
+   * a `passThrough` reply, or file content. Lets a debug view render text as text and bytes as
+   * hex without re-deciding the question. */
+  text: string | null;
+  /** True for a channel-1 message the host never asked for, and for every channel-0/2 message. */
+  unsolicited: boolean;
+  at: number;
+}
+
+/**
+ * A `transferIn`/`transferOut` failure, handed to {@link CfxDeviceOptions.onTransferError} —
+ * whether or not the read pump goes on to recover it. Without this, a `transferIn` the retry loop
+ * swallowed left no trace anywhere a caller could see: only a `console.error` and, if the retries
+ * ran out, the unrelated {@link CfxDeviceOptions.onClose}. This is what lets a debug view show a
+ * retried-but-recovered glitch as what it was, in place among the traffic it interrupted, rather
+ * than nothing at all.
+ */
+export interface CfxTransferErrorEvent {
+  at: number;
+  direction: "out" | "in";
+  message: string;
+  /** 1-based count of consecutive failures so far, including this one. Always 1 for `"out"`:
+   * {@link CfxDevice.exchangeBytes}'s `transferOut` is never retried. */
+  attempt: number;
+  /** True when this failure ends something — the read pump giving up after
+   * {@link READ_ERROR_RETRY_LIMIT} tries or losing the device, or (always, for `"out"`) the one
+   * command this write belonged to. Never by itself a reason the *connection* tears down; that is
+   * still exactly what {@link CfxDeviceOptions.onClose} reports. */
+  fatal: boolean;
+}
+
+export interface CfxDeviceOptions {
+  /** Called for every logical message in both directions, in wire order. */
+  onTraffic?: (event: CfxTrafficEvent) => void;
+  /** Called for every `transferIn`/`transferOut` failure, retried or not — see
+   * {@link CfxTransferErrorEvent}. */
+  onTransferError?: (event: CfxTransferErrorEvent) => void;
+  /** Called when the read pump stops — a disconnect, or an ordinary {@link CfxDevice.close}. */
+  onClose?: (error: Error | null) => void;
+  /** Per-command timeout. A `GETFILE` of a large plate read is still comfortably inside this. */
+  timeoutMs?: number;
+}
+
+/**
+ * What `GETFILESLEN` said about a path (`usb.md` §5). An ASCII length means the directory can be
+ * listed; the two binary payloads are the instrument's way of saying it won't produce one.
+ */
+export type CfxListingStatus =
+  /** A length came back, so `LISTALLFILES` was run and `names` is that directory's contents. */
+  | "ok"
+  /** The directory exists but holds no files (only subdirectories, or nothing at all). */
+  | "empty"
+  /** No such directory — a misspelling, or a path that names a file rather than a directory. */
+  | "missing"
+  /** A binary payload this library doesn't recognize. Treated like `missing`: nothing is listed. */
+  | "unknown";
+
+/** One directory listing: the names, plus the byte length `GETFILESLEN` reported for them. */
+export interface CfxDirectory {
+  path: string;
+  names: string[];
+  /** `null` when the instrument answered with a binary payload instead of a number — see
+   * {@link CfxDevice.listFiles}. */
+  listingBytes: number | null;
+  /**
+   * What the instrument said. `empty` is a real answer about *this* path and `names` is correctly
+   * empty; `missing`/`unknown` mean nothing was learned.
+   */
+  status: CfxListingStatus;
+  /**
+   * True when `names` describes this directory — `ok` or `empty`.
+   *
+   * False means `GETFILESLEN` gave no length and no other reading of its reply, so `LISTALLFILES`
+   * was never sent. Not a soft failure to paper over: because `LISTALLFILES` replays the last
+   * successfully buffered listing — one that survives even a disconnect and reconnect — issuing
+   * it anyway returns *another directory's contents* under this path's name.
+   */
+  listed: boolean;
+}
+
+/**
+ * The two binary `GETFILESLEN` replies, keyed by their four payload bytes (measured live; see
+ * `usb.md` §5). Both are `passThrough` messages (§2) rather than the usual `<value>;<code>` text.
+ */
+const LISTING_STATUS_CODES = new Map<string, CfxListingStatus>([
+  ["7,0,9,0", "empty"],
+  ["4,0,9,0", "missing"],
+]);
+
+/** What one {@link CfxDevice.sendFile} upload did, including both sides' checksums. */
+export interface CfxUploadResult {
+  /** The friendly path the file was sent to. */
+  path: string;
+  /** The GUID path the device actually stored it under, or null if it named none. */
+  storedPath: string | null;
+  bytes: number;
+  /** The checksum this client computed and announced (`crc.ts`). */
+  crcSent: number;
+  /** The checksum the device computed over what it stored, or null if it reported none. */
+  crcStored: number | null;
+  /** True when the two agree — the only evidence that the bytes landed intact. */
+  verified: boolean;
+}
+
+/** What one {@link CfxDevice.startRun} did. The run is going by the time this resolves. */
+export interface CfxRunStartResult {
+  /** One entry per file successfully sent in the §7.4 deposit phase. */
+  uploads: CfxUploadResult[];
+  /**
+   * Anything that went wrong *after* the run started — a file that didn't copy, or a checksum
+   * that came back under the other convention. Never a reason to consider the run failed: it is
+   * running. Surfaced so a UI can say the archive may be missing its plate map.
+   */
+  uploadErrors: string[];
+}
+
+/** How {@link CfxDevice.awaitRunStart} waits — every field has a sensible default. */
+export interface CfxAwaitStartOptions {
+  /** Gap between `STATUS?` reads. Default 1 s, about CFX Manager's own poll. */
+  pollMs?: number;
+  /** How long the run may take to appear. Default 60 s — measured starts take ≈11–12 s
+   * (`usb.md` §7.4, "The folder is cleared as the run starts"). */
+  timeoutMs?: number;
+  /** Called with every `STATUS?` this reads, so a caller whose own poll is paused stays live. */
+  onStatus?: (status: CfxStatus) => void;
+}
+
+/** How {@link CfxDevice.releaseRun} waits for the instrument to let go of a finished run. */
+export interface CfxReleaseOptions {
+  /** Gap between `STATUS?` reads. Default 500 ms. */
+  pollMs?: number;
+  /** How long the release may take. Default 15 s — measured releases complete inside 2.75 s
+   * (`usb.md` §7.6). */
+  timeoutMs?: number;
+  /** Called with every `STATUS?` this reads, so a caller whose own poll is paused stays live. */
+  onStatus?: (status: CfxStatus) => void;
+}
+
+/** What {@link CfxDevice.releaseRun} found. */
+export interface CfxReleaseResult {
+  /** The reply to the acknowledging `CANCEL` — `0000` whether or not anything was released. */
+  reply: CfxResponse;
+  /** True once `STATUS?` no longer names the run. False on a timeout. */
+  released: boolean;
+  /** The last status read. */
+  status: CfxStatus;
+}
+
+/** How {@link CfxDevice.cancelRun} should behave — every field has a sensible default. */
+export interface CfxCancelOptions {
+  /**
+   * True when a run has been asked for but may not have appeared in `STATUS?` yet — the app's
+   * "run pending" state. Without it a cancel issued in the start window (see
+   * {@link CfxDevice.cancelRun} point 3) finds nothing running and returns having done nothing,
+   * which is precisely the failure this guards. Default false.
+   */
+  expectStart?: boolean;
+  /** Stop *now*, accepting the loss of a plate read in flight (`usb.md` §7.8 step 1). */
+  force?: boolean;
+  /** How long to leave between a command and the `STATUS?` that checks it. Default 500 ms. */
+  pollMs?: number;
+  /** How long to let a plate read in flight finish before cancelling anyway. Default 30 s. */
+  readWaitMs?: number;
+  /** Overall budget before giving up and reporting `timedOut`. Default 60 s. */
+  timeoutMs?: number;
+  /** How long a run asked for may take to appear, with `expectStart`. Default 20 s — measured
+   * start windows are ~6 s, or ~11 s for a run with plate reads (`usb.md` §7.3). */
+  startWindowMs?: number;
+  /** Called with every `STATUS?` this reads, so a caller whose own poll is paused stays live. */
+  onStatus?: (status: CfxStatus) => void;
+}
+
+/** What {@link CfxDevice.cancelRun} did, and what the instrument said about it. */
+export interface CfxCancelResult {
+  /** The state the run was in when the stop was asked for. */
+  startedFrom: "running" | "paused" | "finished" | "idle";
+  /** True once `STATUS?` no longer reports a running protocol — the point of the exercise. */
+  stopped: boolean;
+  /** How many `CANCEL`s it took. More than one means the first didn't land — see point 3. */
+  attempts: number;
+  /** True if a paused run had to be resumed first (`usb.md` §7.8 step 2). */
+  resumed: boolean;
+  /** True if a plate read in flight was allowed to finish first (step 1). */
+  waitedForRead: boolean;
+  /**
+   * True if the status register's **protocol cancelled** bit was seen set (`usb.md` §3.2, field 7
+   * bit 7). This is the instrument confirming *this* run was aborted rather than having finished
+   * on its own, and it is the only place that distinction is ever made — it survives nowhere in
+   * the run's files (see `runFolder.ts`'s `runCompleteness`).
+   */
+  sawCancelledFlag: boolean;
+  /** The last status read. */
+  status: CfxStatus;
+  /** `ERRORLIST A` afterwards (step 5). A user-initiated stop is not a fault, so this should be
+   * empty; anything in it is about something else. */
+  errors: string[];
+  /** True if the budget ran out with the protocol still running. */
+  timedOut: boolean;
+  /** Human-readable account of anything non-obvious that happened, for the UI to show. */
+  notes: string[];
+}
+
+/** True when `STATUS?`'s current-step text is a plate read (`usb.md` §7.5's live echo of §3.1). */
+function isPlateReadStep(stepText: string): boolean {
+  return /^PLATEREAD\b/i.test(stepText.trim());
+}
+
+const ENCODER = new TextEncoder();
+
+/** Throw on a non-success code, else pass the response through. */
+function checked(command: string, res: CfxResponse): CfxResponse {
+  if (!res.ok) throw new CfxCommandError(command, res);
+  return res;
+}
+
+interface Pending {
+  command: string;
+  resolve: (res: CfxMessage) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout> | null;
+  /**
+   * When set, a channel-1 reply this returns false for is not this command's answer: it is a
+   * reply left over from an earlier connection (design point 2), dropped as unsolicited while this
+   * request stays at the head of the queue. Only `*IDN?` sets one — see {@link looksLikeIdentity}.
+   */
+  accept?: (msg: CfxMessage) => boolean;
+  /**
+   * Set for a reply known to be `expected` bytes long, which may arrive as several messages: one
+   * message's length field is a `uint16` and the instrument fills it to 65,530 bytes (`usb.md`
+   * §5), so a larger file comes back as consecutive channel-1 messages, back to back. They are
+   * collected here and resolved as one — see {@link CfxDevice.dispatch}.
+   */
+  assembly?: { expected: number; parts: Uint8Array[]; received: number };
+}
+
+/** What a request may say about its reply — see {@link Pending}'s `accept` and `assembly`. */
+interface ReplyOptions {
+  accept?: Pending["accept"];
+  /** The reply's length in bytes, when it is known in advance and may span several messages. */
+  bytes?: number;
+}
+
+/**
+ * Whether a reply is an answer to `*IDN?` — `BIO-RAD LABORATORIES,C1000,CT019138,2.0.231.0;0000`
+ * (`usb.md` §3): four comma-separated fields, the first naming Bio-Rad, and no semicolon inside
+ * the value. The stale replies this has to turn away are a `STATUS?`/`RTSTATUS?` poll (both
+ * semicolon-heavy) and a `LISTALLFILES` listing (commas, but no manufacturer).
+ */
+function looksLikeIdentity(msg: CfxMessage): boolean {
+  const res = parseResponse(msg.payload);
+  if (!res.ok || res.value === null || res.value.includes(";")) return false;
+  const parts = res.value.split(",");
+  return parts.length >= 4 && /^BIO-RAD\b/i.test(parts[0]!.trim());
+}
+
+export class CfxDevice {
+  private readonly opts: CfxDeviceOptions;
+  private readonly inbound = new FrameReassembler();
+  private readonly queue: Pending[] = [];
+  /** Serializes `command` calls — see design point 2 in the module comment. */
+  private chain: Promise<unknown> = Promise.resolve();
+  private pump: Promise<void> | null = null;
+  private closing = false;
+  private closed = false;
+
+  constructor(
+    readonly usb: UsbDeviceLike,
+    options: CfxDeviceOptions = {},
+  ) {
+    this.opts = options;
+  }
+
+  get isOpen(): boolean {
+    return this.pump !== null && !this.closed;
+  }
+
+  /** Open, configure and claim the vendor-specific interface, then start the read pump. */
+  async open(): Promise<void> {
+    if (this.pump) return;
+    if (!this.usb.opened) await this.usb.open();
+    // A freshly-enumerated device may have no configuration selected yet; one that has been
+    // opened before already does, and re-selecting it resets endpoint state for no reason.
+    if (this.usb.configuration == null) await this.usb.selectConfiguration(CFX_CONFIGURATION);
+    await this.usb.claimInterface(CFX_INTERFACE);
+    this.closed = false;
+    this.closing = false;
+    this.inbound.reset();
+    this.pump = this.readLoop();
+  }
+
+  /** Stop the pump, release the interface and close the device. Safe to call twice. */
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closing = true;
+    this.closed = true;
+    // Whatever is in flight will never be answered now.
+    this.failAll(new Error("device closed"));
+    try {
+      await this.usb.releaseInterface(CFX_INTERFACE);
+    } catch {
+      /* already gone — a physical unplug takes the interface with it */
+    }
+    try {
+      await this.usb.close();
+    } catch {
+      /* as above */
+    }
+    this.pump = null;
+  }
+
+  // ---- the read pump ----------------------------------------------------
+
+  private async readLoop(): Promise<void> {
+    let error: Error | null = null;
+    let consecutiveErrors = 0;
+    readLoop: while (!this.closing) {
+      let result: UsbInTransferResultLike;
+      try {
+        result = await this.usb.transferIn(CFX_ENDPOINT_IN, CFX_READ_CHUNK);
+      } catch (e) {
+        // A close() in progress rejects the in-flight transfer; that isn't a failure.
+        if (this.closing) break readLoop;
+        const err = e instanceof Error ? e : new Error(String(e));
+        consecutiveErrors++;
+        // Three ways this ends the pump. `usb.opened` flips to false the moment Chrome notices a
+        // real unplug; `isUnrecoverableTransferError` catches the failures that survive on a
+        // still-`opened` handle but can only be fixed by reconnecting; and past that, a *run* of
+        // otherwise-retryable failures. Anything else is a transient stall on a live device, which
+        // is what the retry exists for.
+        const unrecoverable = isUnrecoverableTransferError(err);
+        const fatal =
+          unrecoverable || consecutiveErrors >= READ_ERROR_RETRY_LIMIT || !this.usb.opened;
+        console.error(
+          `[CfxDevice] transferIn failed (attempt ${consecutiveErrors}/${READ_ERROR_RETRY_LIMIT}` +
+            `, endpoint ${CFX_ENDPOINT_IN}, opened=${this.usb.opened}, ` +
+            `${this.queue.length} command(s) pending)` +
+            `${fatal ? (unrecoverable ? " — unrecoverable, giving up" : " — giving up") : " — retrying"}:`,
+          err,
+        );
+        this.opts.onTransferError?.({
+          at: Date.now(),
+          direction: "in",
+          message: err.message,
+          attempt: consecutiveErrors,
+          fatal,
+        });
+        if (fatal) {
+          error = err;
+          break readLoop;
+        }
+        // A halted endpoint stays halted until it is explicitly cleared: without this every
+        // remaining retry fails identically and the connection dies anyway, which is the shape a
+        // burst of four failures 200 ms apart has. Optional on `UsbDeviceLike` because node-usb's
+        // WebUSB device is the one that may not have it; a failure here is not itself fatal, since
+        // the retry is worth attempting either way.
+        try {
+          await this.usb.clearHalt?.("in", CFX_ENDPOINT_IN);
+        } catch (clearErr) {
+          console.warn("[CfxDevice] clearHalt failed before retry:", clearErr);
+        }
+        await delay(READ_ERROR_RETRY_DELAY_MS);
+        continue readLoop;
+      }
+      consecutiveErrors = 0;
+      const chunk = transferBytes(result);
+      if (chunk.length === 0) continue readLoop;
+      for (const msg of this.inbound.push(chunk)) this.dispatch(msg);
+    }
+    this.pump = null;
+    if (error) {
+      console.error(
+        `[CfxDevice] read pump stopped; failing ${this.queue.length} pending command(s)`,
+        error,
+      );
+      this.failAll(error);
+    }
+    this.opts.onClose?.(error);
+  }
+
+  private dispatch(msg: CfxMessage): void {
+    const head = msg.channel === CHANNEL_ASCII ? this.queue[0] : undefined;
+    if (head?.accept && !head.accept(msg)) {
+      // A reply from before this connection, read ahead of the answer to the command at the head
+      // of the queue (design point 2). Leave the command waiting; its answer is still coming.
+      console.warn(
+        `[CfxDevice] dropping a stale reply read ahead of ${head.command}'s answer:`,
+        usbTrafficText(msg.payload)?.slice(0, 80) ?? `${msg.payload.length} bytes`,
+      );
+      this.emit("in", msg, true);
+      return;
+    }
+    const waiting = head;
+    this.emit("in", msg, !waiting);
+    if (!waiting) return; // channel 0/2, or a channel-1 message nobody asked for
+    // A reply arriving in parts stays at the head of the queue until the last of them: the
+    // protocol has no request ids, so a part released early would answer the *next* command.
+    // Only a *full* message promises more — the instrument fills every part but the last — so a
+    // short one ends the reply even when it falls short, and the caller's size check reports the
+    // truncation now rather than after a timeout. (`passThrough` can't tell content from a status
+    // code here: a file's bytes carry it too. A four-byte status code is simply a short part.)
+    const a = waiting.assembly;
+    if (a) {
+      a.parts.push(msg.payload);
+      a.received += msg.payload.length;
+      if (a.received < a.expected && msg.payload.length >= MAX_MESSAGE_PAYLOAD) return;
+      msg = { ...msg, payload: a.parts.length === 1 ? a.parts[0]! : concatBytes(a.parts) };
+    }
+    this.queue.shift();
+    if (waiting.timer) clearTimeout(waiting.timer);
+    waiting.resolve(msg);
+  }
+
+  private emit(direction: "out" | "in", msg: CfxMessage, unsolicited: boolean): void {
+    if (!this.opts.onTraffic) return;
+    this.opts.onTraffic({
+      direction,
+      channel: msg.channel,
+      payload: msg.payload,
+      // A `passThrough` reply is raw by declaration, so don't even try to read it as text.
+      text: msg.passThrough ? null : usbTrafficText(msg.payload),
+      unsolicited,
+      at: Date.now(),
+    });
+  }
+
+  private failAll(err: Error): void {
+    while (this.queue.length) {
+      const p = this.queue.shift()!;
+      if (p.timer) clearTimeout(p.timer);
+      p.reject(err);
+    }
+  }
+
+  // ---- sending ----------------------------------------------------------
+
+  /** Take the command channel for the duration of `fn`, so nothing else can interleave. */
+  private hold<T>(fn: () => Promise<T>): Promise<T> {
+    // `.then(fn, fn)` so a failed predecessor doesn't wedge the channel.
+    const next = this.chain.then(fn, fn);
+    this.chain = next.catch(() => undefined);
+    return next;
+  }
+
+  /** Write one command and await its reply. Assumes the caller holds the channel. */
+  private async exchange(
+    command: string,
+    timeoutMs?: number,
+    reply: ReplyOptions = {},
+  ): Promise<CfxMessage> {
+    return this.exchangeBytes(command, encodeCommand(command), timeoutMs, reply);
+  }
+
+  /**
+   * As {@link exchange}, but with the payload supplied whole.
+   *
+   * Exists for `CRCSENDFILE`, the one command whose payload is not all-ASCII: a file's raw bytes
+   * follow the command text in the *same* message, and — measured byte-exactly from the capture,
+   * where the announced length is the prefix plus the file and not two more — with **no `\r\n`
+   * terminator**, unlike every text command. `command` here is the label the timeout message and
+   * the pending queue use, not something that gets encoded.
+   */
+  private async exchangeBytes(
+    command: string,
+    payload: Uint8Array,
+    timeoutMs?: number,
+    { accept, bytes }: ReplyOptions = {},
+  ): Promise<CfxMessage> {
+    // `pump === null` covers the case `closed` doesn't: the read pump gave up on its own, so the
+    // reply to this command is never coming. Without it the command would sit in the queue until
+    // its timeout — a minute, for a `GETFILE` — when the answer is already knowable.
+    if (this.closed || this.pump === null) throw new Error("device is closed");
+    const header = { ...REQUEST_HEADER, channel: CHANNEL_ASCII };
+    const frame = encodeFrame(header, payload);
+    let pending!: Pending;
+    const reply = new Promise<CfxMessage>((resolve, reject) => {
+      pending = { command, resolve, reject, timer: null, accept };
+      if (bytes !== undefined) pending.assembly = { expected: bytes, parts: [], received: 0 };
+      const ms = timeoutMs ?? this.opts.timeoutMs ?? 10_000;
+      pending.timer = setTimeout(() => {
+        // Drop it from the queue, or every later reply would be matched to the wrong request.
+        const i = this.queue.indexOf(pending);
+        if (i >= 0) this.queue.splice(i, 1);
+        reject(new Error(`timed out after ${ms}ms waiting for a reply to ${command}`));
+      }, ms);
+      this.queue.push(pending);
+    });
+    this.emit("out", { ...header, payload, passThrough: false } as CfxMessage, false);
+    try {
+      await this.usb.transferOut(CFX_ENDPOINT_OUT, frame);
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      // Drop the pending reply: nothing will ever answer a write that never went out, and leaving
+      // it queued would mismatch the *next* command's reply against this one. `command` calls are
+      // serialized (design point 2), so `pending` is still the queue's own last entry here.
+      const i = this.queue.indexOf(pending);
+      if (i >= 0) {
+        if (pending.timer) clearTimeout(pending.timer);
+        this.queue.splice(i, 1);
+      }
+      this.opts.onTransferError?.({ at: Date.now(), direction: "out", message: err.message, attempt: 1, fatal: true });
+      throw err;
+    }
+    return reply;
+  }
+
+  /**
+   * Run several commands with exclusive use of the command channel.
+   *
+   * Needed wherever one command's answer depends on the one before it — see design point 2. `fn`
+   * receives the same three primitives the public API is built from; it must use those rather
+   * than calling back into {@link send}/{@link command}, which would wait for a channel `fn`
+   * itself is holding and deadlock.
+   */
+  private async sequence<T>(
+    fn: (ops: {
+      /** `expectBytes` collects a reply that may span several messages — see {@link Pending}. */
+      send: (command: string, timeoutMs?: number, expectBytes?: number) => Promise<CfxMessage>;
+      command: (command: string, timeoutMs?: number) => Promise<CfxResponse>;
+      tryCommand: (command: string, timeoutMs?: number) => Promise<CfxResponse>;
+      sendBytes: (label: string, payload: Uint8Array, timeoutMs?: number) => Promise<CfxMessage>;
+    }) => Promise<T>,
+  ): Promise<T> {
+    return this.hold(() =>
+      fn({
+        send: (c, t, n) => this.exchange(c, t, { bytes: n }),
+        command: async (c, t) => checked(c, parseResponse((await this.exchange(c, t)).payload)),
+        tryCommand: async (c, t) => parseResponse((await this.exchange(c, t)).payload),
+        sendBytes: (l, p, t) => this.exchangeBytes(l, p, t),
+      }),
+    );
+  }
+
+  /**
+   * Send one command line and resolve with the reply message, unparsed.
+   *
+   * Most callers want {@link command}, which parses the reply. This is for the replies that are
+   * *not* `value;code` text — `GETFILE`'s file bytes, and any `passThrough` response — where
+   * parsing would corrupt the payload.
+   *
+   * Private, along with {@link command} and {@link tryCommand}: see design point 3. The command
+   * lines these take are literals in this file, not caller input.
+   */
+  private async send(command: string, timeoutMs?: number): Promise<CfxMessage> {
+    return this.hold(() => this.exchange(command, timeoutMs));
+  }
+
+  /** Send a command and parse its reply. Throws {@link CfxCommandError} on a non-`0000` code. */
+  private async command(command: string, timeoutMs?: number): Promise<CfxResponse> {
+    return checked(command, parseResponse((await this.send(command, timeoutMs)).payload));
+  }
+
+  /** As {@link command}, but returns the failing response instead of throwing — for the queries
+   * gathered best-effort at connect time, and for an action command whose rejection is a result
+   * to report rather than a failure. */
+  private async tryCommand(command: string, timeoutMs?: number): Promise<CfxResponse> {
+    return parseResponse((await this.send(command, timeoutMs)).payload);
+  }
+
+  // ---- typed operations -------------------------------------------------
+
+  /**
+   * `*IDN?` — and, being the first command of every connection, the one that brings the channel
+   * into step: a reply left in the pipe by the previous connection is turned away by
+   * {@link looksLikeIdentity} rather than taken as the answer (design point 2).
+   */
+  async identify(): Promise<CfxIdentity> {
+    const msg = await this.hold(() => this.exchange("*IDN?", undefined, { accept: looksLikeIdentity }));
+    return parseIdentity(checked("*IDN?", parseResponse(msg.payload)));
+  }
+
+  async status(): Promise<CfxStatus> {
+    return parseStatus(await this.command("STATUS?"));
+  }
+
+  async rtStatus(): Promise<CfxRtStatus> {
+    return parseRtStatus(await this.command("RTSTATUS?"));
+  }
+
+  /** `ERRORLIST A` — the error *contents*, empty when there is nothing to report. */
+  async errorList(): Promise<string[]> {
+    const res = await this.command("ERRORLIST A");
+    const v = (res.value ?? "").trim();
+    return v === "" ? [] : v.split(",");
+  }
+
+  /**
+   * The static identification block (`usb.md` §3), gathered once at connect.
+   *
+   * Every query past `*IDN?` is best-effort: an unrecognised command on some other Bio-Rad model
+   * should leave that one field undefined, not fail the connection.
+   */
+  async deviceInfo(): Promise<CfxDeviceInfo> {
+    const info: CfxDeviceInfo = await this.identify();
+    const opt = async (cmd: string): Promise<string | undefined> => {
+      try {
+        const res = await this.tryCommand(cmd);
+        return res.ok ? res.value ?? undefined : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const numeric = (v: string | undefined): number | undefined => {
+      if (v === undefined) return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    info.frontEndSoftware = await opt("FrontEndSoftware?");
+    info.baseSerial = await opt("BASESN?");
+    info.alphaSerial = await opt("ALPHASN?");
+    info.alphaId = await opt("ALPHAID?");
+    // Comes back quoted — `"96FX"`.
+    info.blockDescription = (await opt("BLOCKDESC?"))?.replace(/^"|"$/g, "");
+    info.blockCount = numeric(await opt("BLOCKCOUNT?"));
+    info.cpld = await opt("CPLD?");
+    info.volumeUl = numeric(await opt("VOLUME?"));
+    info.freeSpaceBytes = numeric(await opt("GETFREESPACE"));
+    info.totalRamBytes = numeric(await opt("GETTOTALRAM"));
+    info.lidForce = await opt("LIDFORCE?");
+    info.lidVersion = await opt("LIDVERSION?");
+    info.lidBVersion = await opt("LIDBVERSION?");
+    info.superLockdown = await opt("SUPERLOCKDOWNMODE?");
+    info.errorCount = numeric(await opt("ERRORS?"));
+    return info;
+  }
+
+  // ---- filesystem -------------------------------------------------------
+
+  /**
+   * List a directory: `GETFILESLEN <dir>` immediately followed by `LISTALLFILES <dir>`.
+   *
+   * **The pair is one operation, not a convenience.** `LISTALLFILES` returns the listing the
+   * preceding `GETFILESLEN` computed and ignores the path it is given itself — measured against a
+   * live instrument, where `GETFILESLEN \Storage Card\CurrentRun` followed by
+   * `LISTALLFILES \Storage Card\PCRunReport` returns CurrentRun's 42 entries, and `LISTALLFILES`
+   * with no `GETFILESLEN` before it returns a stale buffer. `usb.md` §5 read the pairing as the
+   * host double-checking itself; it is actually load-bearing, which is why this runs inside a
+   * {@link sequence} rather than as two independent calls.
+   *
+   * Names are comma-separated, which is all the protocol offers: a name containing a comma would
+   * be indistinguishable from two names, and nothing escapes one. No observed name has one (they
+   * run to `QuickPlate_96 wells_All Channels.pltd` — spaces, no commas), so this splits on the
+   * separator and accepts the limit rather than pretending to a robustness it can't have.
+   *
+   * Lists **files only**: a directory containing nothing but subdirectories comes back `empty`,
+   * which is why `\Storage Card` has no listing of its own. Nor is there any other way to find a
+   * subdirectory — CFX Manager reaches `Real-Time Data` and `Logs` by name — so the directories a
+   * client can browse are exactly the ones it already knows ({@link CFX_DIRECTORIES}).
+   *
+   * When `GETFILESLEN` answers with a binary payload instead of a length ({@link CfxListingStatus}),
+   * `LISTALLFILES` is **not** sent: with nothing newly buffered it would hand back whichever
+   * directory was listed last (measured — the reply to `LISTALLFILES \Storage Card` is still the
+   * previous `CurrentRun` listing, in full).
+   */
+  async listFiles(dir: string): Promise<CfxDirectory> {
+    assertCommandArgument("directory", dir);
+    return this.sequence(async ({ send, command }) => {
+      const lenMsg = await send(`GETFILESLEN ${dir}`);
+      let listingBytes: number | null = null;
+      if (lenMsg.passThrough) {
+        const status =
+          LISTING_STATUS_CODES.get(Array.from(lenMsg.payload).join(",")) ?? "unknown";
+        return { path: dir, names: [], listingBytes: null, status, listed: status === "empty" };
+      }
+      const res = parseResponse(lenMsg.payload);
+      if (!res.ok) throw new CfxCommandError(`GETFILESLEN ${dir}`, res);
+      const n = Number(res.value);
+      listingBytes = Number.isFinite(n) ? n : null;
+      if (listingBytes === null) {
+        return { path: dir, names: [], listingBytes: null, status: "unknown", listed: false };
+      }
+      const res2 = await command(`LISTALLFILES ${dir}`);
+      const v = (res2.value ?? "").trim();
+      const names = v === "" ? [] : v.split(",").filter((n) => n !== "");
+      return { path: dir, names, listingBytes, status: "ok", listed: true };
+    });
+  }
+
+  /**
+   * `GETFILE <path>` — the file's bytes, preceded by the `GETFILESIZE` that sizes the transfer.
+   *
+   * The reply is the file itself, with no `;0000` appended: this is the one response that must
+   * not go through {@link parseResponse}, which would take the last semicolon in a binary file as
+   * a field separator. The announced size is used to verify the transfer arrived whole.
+   *
+   * It is also what lets a file over 64 KB arrive at all: such a reply comes as several messages
+   * of 65,530 bytes and a remainder (`usb.md` §5 — a 406,323-byte `.zpcr` from `Real-Time Data`
+   * was seven), and the read pump collects them into one against this count (see {@link Pending}).
+   *
+   * Runs as one {@link sequence} for the same reason {@link listFiles} does — `GETFILESLEN`
+   * demonstrably primes `LISTALLFILES`, so the size/fetch pair is treated as equally stateful
+   * rather than assumed independent.
+   */
+  async getFile(path: string, timeoutMs = 60_000): Promise<Uint8Array> {
+    assertCommandArgument("path", path);
+    return this.sequence(async ({ send, command }) => {
+      const sizeRes = await command(`GETFILESIZE ${path}`);
+      const expected = Number(sizeRes.value);
+      if (!Number.isFinite(expected)) {
+        throw new Error(`GETFILESIZE ${path}: unparseable size ${sizeRes.raw}`);
+      }
+      // The run's `begun`/`ended` markers are zero-content by design (runFolder.ts), and a
+      // `GETFILE` sent for one has been observed to go unanswered until the reply timer below
+      // finally rejects it — costing up to `timeoutMs` per marker. Nothing to fetch, so don't ask.
+      if (expected === 0) return new Uint8Array(0);
+      const msg = await send(`GETFILE ${path}`, timeoutMs, expected);
+      if (msg.payload.length !== expected) {
+        throw new Error(
+          `GETFILE ${path}: expected ${expected} bytes, received ${msg.payload.length}`,
+        );
+      }
+      return msg.payload;
+    });
+  }
+
+  /** `DELFILE <path>`. */
+  async deleteFile(path: string): Promise<void> {
+    assertCommandArgument("path", path);
+    await this.command(`DELFILE ${path}`);
+  }
+
+  /**
+   * Upload one file (`usb.md` §5, §7.4): the five-command cycle, checksum-verified end to end.
+   *
+   * ```
+   * DELFILE <path>                  clear any stale file at the friendly name
+   * CRCSENDFILE "<crc>*<path>",…    the bytes, prefixed by our own checksum
+   * COMPUTEFILECRC "<path>"         → the GUID the device actually stored it under
+   * GETFILESLEN + LISTALLFILES      the host re-lists
+   * GETFILECRC "<guid path>"        → the device's checksum, to compare against ours
+   * ```
+   *
+   * Details that are load-bearing and not obvious from the command names (`usb.md` §7.4):
+   *
+   * - **`DELFILE` on a file that isn't there is normal.** It answers with a `passThrough` binary
+   *   payload — `05 00 09 00`, "no such file", a third member of §5's status-code family — rather
+   *   than an error code, and three of the capture's four uploads got exactly that. A first
+   *   upload to a clean directory always does, so treating it as fatal would break the ordinary
+   *   path.
+   * - **`COMPUTEFILECRC` returns no CRC.** Despite the name, it hands back the *GUID name* the
+   *   device stored the file under (`<dir>\<guid>;0000`). That name is the only way to ask about
+   *   the stored copy, which is why the verification step needs it — and the GUID is transient,
+   *   gone from the listing by the next file's upload, so it is used immediately and not kept.
+   * - **The middle listing is a UI refresh**, not a protocol requirement — the GUID is already
+   *   known. It is kept because the `GETFILESLEN`/`LISTALLFILES` *pairing* is mandatory wherever
+   *   a listing happens (see {@link listFiles}) and this whole cycle already holds the channel.
+   *
+   * Resolves with both checksums so the caller can report a mismatch — including the
+   * even-length-file ambiguity of `crc.ts`, which this is the only place that can measure.
+   * Throws only if the instrument rejects a command outright.
+   */
+  async sendFile(path: string, bytes: Uint8Array): Promise<CfxUploadResult> {
+    assertCommandArgument("path", path);
+    const crc = cfxFileCrc(bytes);
+    const prefix = ENCODER.encode(`CRCSENDFILE "${formatCfxFileCrc(crc)}*${path}",`);
+    const payload = new Uint8Array(prefix.length + bytes.length);
+    payload.set(prefix, 0);
+    payload.set(bytes, prefix.length);
+    const dir = path.slice(0, Math.max(0, path.lastIndexOf("\\")));
+
+    return this.sequence(async ({ command, tryCommand, sendBytes }) => {
+      // Not `command`: a missing file is the normal case on a first upload — see above.
+      await tryCommand(`DELFILE ${path}`);
+      const sent = parseResponse((await sendBytes(`CRCSENDFILE ${path}`, payload, 60_000)).payload);
+      if (!sent.ok) throw new CfxCommandError(`CRCSENDFILE ${path}`, sent);
+      const stored = await command(`COMPUTEFILECRC "${path}"`);
+      const storedPath = (stored.value ?? "").trim();
+      // `tryCommand`, because this pair is the UI refresh noted above rather than a step the
+      // upload depends on: `GETFILESLEN` answers a directory it can't measure with a binary
+      // payload (§5), which would parse as a failure and take a perfectly good upload with it.
+      await tryCommand(`GETFILESLEN ${dir}`);
+      await tryCommand(`LISTALLFILES ${dir}`);
+      // Without a GUID there is nothing to interrogate; report the upload unverified rather than
+      // inventing a path, which would ask the device about a file that doesn't exist.
+      if (storedPath === "") {
+        return {
+          path,
+          storedPath: null,
+          bytes: bytes.length,
+          crcSent: crc,
+          crcStored: null,
+          verified: false,
+        };
+      }
+      const echoed = await command(`GETFILECRC "${storedPath}"`);
+      const raw = Number(echoed.value);
+      const crcStored = Number.isFinite(raw) ? raw : null;
+      return {
+        path,
+        storedPath,
+        bytes: bytes.length,
+        crcSent: crc,
+        crcStored,
+        verified: crcStored === crc,
+      };
+    });
+  }
+
+  // ---- run control ------------------------------------------------------
+
+  /**
+   * Clear `\Storage Card\PCRunReport` of the previous run's report (`usb.md` §7.1).
+   *
+   * Worth doing rather than skipping: with the directory emptied first, the `.alf` the finished
+   * run writes is the only entry in it, so collecting it afterwards needs no name or timestamp
+   * matching. Failures are swallowed — this is housekeeping, and a run must not be blocked by it.
+   */
+  async clearRunReports(): Promise<string[]> {
+    const dir = await this.listFiles(CFX_RUN_REPORT_DIR);
+    const deleted: string[] = [];
+    for (const name of dir.names) {
+      try {
+        await this.deleteFile(`${CFX_RUN_REPORT_DIR}\\${name}`);
+        deleted.push(name);
+      } catch {
+        /* housekeeping; the run is what matters */
+      }
+    }
+    return deleted;
+  }
+
+  /**
+   * Collect the `.alf` report the finished run wrote to `\Storage Card\PCRunReport` (`usb.md`
+   * §7.10), or null if there isn't one.
+   *
+   * **This is the whole output of a thermal-only run.** A protocol with no `PLATEREAD` leaves
+   * `CurrentRun` untouched (see {@link RunPlan.producesRunFile}), so its report is the only record
+   * that it happened — its name, who started it, the protocol as the instrument actually executed
+   * it, the start and end times, and whether it completed.
+   *
+   * Takes the sole entry rather than matching a name: {@link clearRunReports} empties the
+   * directory at §7.1 of every start, so what is in there afterwards is this run's and only this
+   * run's. When several are somehow present — a start whose housekeeping failed — the last by name
+   * is taken, which is the newest, since the firmware names them `<yyyymmdd>_<hhmmss>_…`.
+   *
+   * That newest-by-name rule is also what makes this usable **outside** a run this client started:
+   * the app reads it on connect to say what the instrument last ran, where the §7.1 guarantee does
+   * not apply and the answer is simply the most recent report the instrument is holding (the app's
+   * `CfxSession.refreshLastReport`).
+   */
+  async runReport(): Promise<{ name: string; bytes: Uint8Array } | null> {
+    const dir = await this.listFiles(CFX_RUN_REPORT_DIR);
+    const reports = dir.names.filter((n) => /\.alf$/i.test(n)).sort();
+    const name = reports[reports.length - 1];
+    if (!name) return null;
+    return { name, bytes: await this.getFile(`${CFX_RUN_REPORT_DIR}\\${name}`) };
+  }
+
+  /**
+   * Run a protocol, start to started (`usb.md` §7).
+   *
+   * The order is the capture's, and it is **not** the one §5's upload machinery suggests. The
+   * protocol is typed in as ASCII directives and `RemoteRun` starts *that*; the file upload
+   * happens afterwards, with the run already under way, and is a **deposit rather than an
+   * instruction** (§7.4) — it is what makes the finished run folder a self-contained experiment,
+   * and nothing executes it. Uploading first would put files somewhere the starting run is about
+   * to rewrite.
+   *
+   * ```
+   * 7.1  clear the old .alf                     (optional housekeeping)
+   * 7.2  PROTOCOL 'PCRUN', the directives, END  one command each, each acked 0000
+   * 7.3  RemoteRun …                            ← the run starts HERE, nothing further required
+   *      ADDCYCLES 0                            a no-op the capture sends as ordinary setup
+   *      STATUS? until the run appears          the firmware is clearing the old folder meanwhile
+   * 7.4  the files                              deposited into the run folder, after the start
+   * ```
+   *
+   * The three phases are also {@link beginRun}, {@link awaitRunStart} and {@link depositRunFiles},
+   * for a caller that wants the device free while it waits (`CfxSession.startRun` does, so Stop
+   * works in the start window). This is the three in order.
+   *
+   * **The deposit waits for the run to appear** in `STATUS?`, as CFX Manager's does: the firmware
+   * empties the previous run out of `CurrentRun` in the seconds after `RemoteRun`, and a file
+   * written while it does can go with it — measured, `usb.md` §7.4 "The folder is cleared as the
+   * run starts". A run that never appears gets no deposit: the folder would still be the previous
+   * run's.
+   *
+   * §7.4 is skipped entirely for a thermal-only protocol, because there is no run folder to
+   * deposit into — `planRun` gives such a plan no uploads at all, so there is nothing to wait for
+   * either. See {@link RunPlan.producesRunFile}, and {@link runReport} for what that run leaves
+   * behind instead.
+   *
+   * **There is no confirmation step.** An earlier reading of the capture had `PROCEED` as the
+   * "operator has closed the lid" confirmation; §7.5 measured it as *skip to the next step*,
+   * issued mid-run to cut a 3-minute denaturation short. Sending it here would silently skip the
+   * run's first step. Expect `STATUS?` to leave `IDLE` within ~10 s of `RemoteRun`, and expect
+   * the *lid* to heat first — the block sits at ambient for ~3 minutes while it does, which a
+   * caller watching block temperature will mistake for a hang.
+   *
+   * The authoring runs inside one {@link sequence}: a status poll interleaving with it is
+   * harmless, but a second caller authoring concurrently would splice two step lists into one
+   * with no way to detect it afterwards.
+   */
+  async startRun(plan: RunPlan, onProgress?: (what: string) => void): Promise<CfxRunStartResult> {
+    await this.beginRun(plan, onProgress);
+    if (plan.uploads.length === 0) return { uploads: [], uploadErrors: [] };
+    onProgress?.("Waiting for the run to start");
+    const started = await this.awaitRunStart();
+    if (!started) return { uploads: [], uploadErrors: [runNotStartedNote(plan)] };
+    return this.depositRunFiles(plan, onProgress);
+  }
+
+  /** §7.1–§7.3 of {@link startRun}: everything up to and including `RemoteRun`. The run is
+   * starting when this resolves, though `STATUS?` won't say so for several seconds yet. */
+  async beginRun(plan: RunPlan, onProgress?: (what: string) => void): Promise<void> {
+    if (!plan.startable) {
+      throw new Error("This run plan has unresolved errors and must not be started.");
+    }
+    onProgress?.("Clearing the previous run report");
+    try {
+      await this.clearRunReports();
+    } catch {
+      /* §7.1 is housekeeping — see clearRunReports */
+    }
+    await this.sequence(async ({ command }) => {
+      for (const [i, line] of plan.commands.entries()) {
+        onProgress?.(`Sending protocol (${i + 1}/${plan.commands.length})`);
+        await command(line);
+      }
+      onProgress?.("Starting the run");
+      // The run begins on this command. Everything after it is deposit and housekeeping.
+      await command(plan.remoteRun);
+      await command("ADDCYCLES 0");
+    });
+  }
+
+  /**
+   * Poll `STATUS?` until a run just begun with {@link beginRun} appears — reporting a step, or
+   * holding a run name (one cancelled or finished already, whose folder was cleared all the same).
+   * Resolves with that status, or null if {@link CfxAwaitStartOptions.timeoutMs} passes first.
+   *
+   * This is the deposit's synchronisation point, and the one CFX Manager uses: by the time the run
+   * shows in `STATUS?` the firmware has finished emptying the previous run out of `CurrentRun`
+   * (`usb.md` §7.4, "The folder is cleared as the run starts" — ≈4.4 s to clear, ≈11.8 s to appear,
+   * in the one run measured). The clear itself has no observable end of its own: a listing only
+   * shows how far it has got.
+   */
+  async awaitRunStart(options: CfxAwaitStartOptions = {}): Promise<CfxStatus | null> {
+    const { pollMs = 1000, timeoutMs = 60_000, onStatus } = options;
+    const started = Date.now();
+    for (;;) {
+      const status = await this.status();
+      onStatus?.(status);
+      if (status.running || status.runName !== "") return status;
+      if (Date.now() - started >= timeoutMs) return null;
+      await delay(pollMs);
+    }
+  }
+
+  /**
+   * §7.4 of {@link startRun}: upload the plan's files into the run folder, then list it once to
+   * confirm every one of them is still there. Call it only once the run has appeared
+   * ({@link awaitRunStart}) — before that, the folder is still being cleared.
+   */
+  async depositRunFiles(plan: RunPlan, onProgress?: (what: string) => void): Promise<CfxRunStartResult> {
+    // Each upload is its own multi-command operation that takes the channel for itself, so this is
+    // not one `sequence` — nesting one inside a held channel would deadlock (see `sequence`).
+    //
+    // Failures here are reported, never thrown: by this point the run is *already going*, and
+    // aborting a started run because a provenance file didn't copy would be the wrong trade —
+    // §7.4's whole point is that a client wanting only the fluorescence can skip this phase.
+    const uploads: CfxUploadResult[] = [];
+    const uploadErrors: string[] = [];
+    for (const [i, upload] of plan.uploads.entries()) {
+      onProgress?.(`Uploading ${upload.name} (${i + 1}/${plan.uploads.length})`);
+      try {
+        const result = await this.sendFile(upload.path, upload.bytes);
+        uploads.push(result);
+        if (!result.verified) {
+          uploadErrors.push(
+            `${upload.name} may not have copied intact: sent ${result.crcSent}, the instrument ` +
+              `reports ${result.crcStored ?? "nothing"}.`,
+          );
+        }
+      } catch (e) {
+        uploadErrors.push(`${upload.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    // A verified upload can still be gone a moment later — that is how a deposited protocol was
+    // lost before the wait above existed — so check the folder once more, after the last one.
+    if (uploads.length > 0) {
+      try {
+        const present = new Set((await this.listFiles(CFX_CURRENT_RUN_DIR)).names);
+        for (const upload of plan.uploads) {
+          if (uploads.some((u) => u.path === upload.path) && !present.has(upload.name)) {
+            uploadErrors.push(`${upload.name} was copied, but is no longer in the run folder.`);
+          }
+        }
+      } catch (e) {
+        uploadErrors.push(
+          `Couldn't confirm the run folder kept its files: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    return { uploads, uploadErrors };
+  }
+
+  /**
+   * `CANCEL` — acknowledge a finished run, releasing the instrument back to idle (`usb.md` §7.6).
+   *
+   * Named for what it does at the *end* of a run, which is the only place this library uses it.
+   * When a protocol completes, `STATUS?` reports `IDLE` with the run's name still attached and
+   * the method still `CALC`; `CANCEL` clears that to the empty-name idle state, and the final
+   * plate read, the `ended` marker and the `.alf` report only appear in the run folder afterwards.
+   * On a run still in progress the same command aborts it — which is why nothing here sends it
+   * without checking the status first.
+   *
+   * **The release is not immediate**, so collecting straight after this is too early: see
+   * {@link releaseRun}, which is what a client that is about to pull the folder wants.
+   */
+  async acknowledgeRun(): Promise<CfxResponse> {
+    return this.tryCommand("CANCEL");
+  }
+
+  /**
+   * Acknowledge a finished run and wait until the instrument has let go of it (`usb.md` §7.6).
+   *
+   * The `CANCEL` is answered at once, but the run stays named in `STATUS?` for a second or two
+   * afterwards, and `ended` and the `.alf` are written only as it is released: measured, a listing
+   * 0.3 s after the `CANCEL` held the final read but neither of those, and a run pulled at that
+   * moment was filed with no report and no `ended` marker — in progress for ever. CFX Manager
+   * waits for `STATUS?` to report the empty idle before it lists anything, and so does this.
+   *
+   * Resolves once `STATUS?` no longer names the run, or with `released: false` after
+   * {@link CfxReleaseOptions.timeoutMs}. Like {@link acknowledgeRun}, only for a run
+   * {@link isFinishedRun} says is finished.
+   */
+  async releaseRun(options: CfxReleaseOptions = {}): Promise<CfxReleaseResult> {
+    const { pollMs = 500, timeoutMs = 15_000, onStatus } = options;
+    const reply = await this.acknowledgeRun();
+    const started = Date.now();
+    for (;;) {
+      const status = await this.status();
+      onStatus?.(status);
+      if (status.runName === "" || status.running) return { reply, released: true, status };
+      if (Date.now() - started >= timeoutMs) return { reply, released: false, status };
+      await delay(pollMs);
+    }
+  }
+
+  /**
+   * `SetDateTime` — set the instrument's clock and zone offset to the host's (`usb.md` §3).
+   *
+   * The reply is `True;0000`, a value rather than the bare code every other action returns, so a
+   * `False` would be the instrument declining; it is reported as an error like a missing reply.
+   * The session sends this once per connection, as CFX Manager does — see `CfxSession`.
+   */
+  async setClock(now: Date = new Date()): Promise<void> {
+    const res = await this.command(setDateTimeCommand(now));
+    if (res.value?.trim() !== "True") throw new CfxCommandError("SetDateTime", res);
+  }
+
+  /** `PAUSE` — suspend the running protocol (`usb.md` §7.9). A no-op when nothing is running. */
+  async pauseRun(): Promise<CfxResponse> {
+    return this.tryCommand("PAUSE");
+  }
+
+  /** `RESUME` — continue a suspended protocol (`usb.md` §7.9). A no-op when nothing is paused. */
+  async resumeRun(): Promise<CfxResponse> {
+    return this.tryCommand("RESUME");
+  }
+
+  /**
+   * Stop a run in progress, properly — `usb.md` §7.8.
+   *
+   * The command itself is one word, and sending it is the easy part. What this adds is the four
+   * things §7.8 requires around it, each of which is a way a naive `CANCEL` goes wrong:
+   *
+   * 1. **It doesn't cancel into a plate read.** While the current step is `PLATEREAD` the optics
+   *    are mid-scan and that cycle's file does not exist yet (§7.5), so cancelling there throws
+   *    the read away. A read is seconds; this waits for the step to change, up to
+   *    {@link CfxCancelOptions.readWaitMs}, and `force` skips the wait for a caller who means now.
+   * 2. **It resumes a paused run first** (§7.8 step 2) — whether `CANCEL` ends a paused run is
+   *    untested, and a stop button is most likely to be pressed in exactly that state.
+   * 3. **It survives the start window.** Measured on a live instrument: between `RemoteRun` and
+   *    the block actually starting there are ~6–11 s during which `STATUS?` still reports the empty
+   *    idle, and a `CANCEL` sent in that window is answered `0000` and *ignored* — the run then
+   *    starts anyway. A fire-and-forget button therefore reports success and leaves a run
+   *    cycling, which is the bug this method exists for. Given `expectStart`, it keeps watching
+   *    for the run to appear and cancels it for real when it does.
+   * 4. **It confirms against `STATUS?`, not against the reply.** The reply to `CANCEL` is `0000`
+   *    whether or not anything stopped.
+   *
+   * **Where it stops.** At the state §7.6 calls a finished run — not running, run name still
+   * held. Acknowledging *that* is the existing end-of-run path's job (see {@link acknowledgeRun}),
+   * because the acknowledgement is also what makes the final read, the `ended` marker and the
+   * `.alf` report appear, and having two owners of that collection is how a run loses its last
+   * cycle. So this deviates from §7.8 step 4's "poll until the descriptor is empty" on purpose:
+   * a client without a §7.6 path should keep going, and this one hands over instead.
+   *
+   * The status is re-read throughout and handed to {@link CfxCancelOptions.onStatus}, since a
+   * caller's own poll is typically standing back while this holds the command channel.
+   */
+  async cancelRun(options: CfxCancelOptions = {}): Promise<CfxCancelResult> {
+    const {
+      expectStart = false,
+      force = false,
+      pollMs = 500,
+      readWaitMs = 30_000,
+      timeoutMs = 60_000,
+      startWindowMs = 20_000,
+      onStatus,
+    } = options;
+
+    const notes: string[] = [];
+    const started = Date.now();
+    let attempts = 0;
+    let sawRunning = false;
+    let sawCancelledFlag = false;
+    let resumed = false;
+    let waitedForRead = false;
+
+    const look = async (): Promise<CfxStatus> => {
+      const s = await this.status();
+      if (s.flags.cancelled) sawCancelledFlag = true;
+      if (s.phase === "running") sawRunning = true;
+      onStatus?.(s);
+      return s;
+    };
+
+    let status = await look();
+    const startedFrom: CfxCancelResult["startedFrom"] = isPaused(status)
+      ? "paused"
+      : status.phase === "running"
+        ? "running"
+        : status.runName
+          ? "finished"
+          : "idle";
+
+    for (;;) {
+      const elapsed = Date.now() - started;
+      // §7.8 step 4 warns against declaring it stuck early — the desktop software allows minutes.
+      // This is a backstop against looping forever, not a verdict; the caller gets `timedOut` and
+      // whatever the last status said.
+      if (elapsed >= timeoutMs) break;
+
+      if (status.phase === "running") {
+        // §7.8 step 1 — a read in flight is a cycle about to become a file.
+        if (isPlateReadStep(status.stepText) && !force && elapsed < readWaitMs) {
+          if (!waitedForRead) {
+            waitedForRead = true;
+            notes.push("Waiting for the plate read in progress to finish before stopping.");
+          }
+          await delay(pollMs);
+          status = await look();
+          continue;
+        }
+        // §7.8 step 2 — clear a pause before cancelling.
+        if (isPaused(status) && !resumed) {
+          resumed = true;
+          notes.push("The run was paused; resumed it first so the cancel lands on a running run.");
+          await this.resumeRun();
+          await delay(pollMs);
+          status = await look();
+          continue;
+        }
+        await this.acknowledgeRun();
+        attempts++;
+        await delay(pollMs);
+        status = await look();
+        continue;
+      }
+
+      // Not running. Holding a run name is §7.6's finished state — the goal.
+      if (status.runName !== "" || sawRunning) break;
+
+      // Nothing is running and nothing is held. Either there was never anything to cancel, or
+      // this is the start window of point 3 and the run is about to appear.
+      if (expectStart && elapsed < startWindowMs) {
+        if (attempts === 0) {
+          // Harmless if the run never starts, and it stops one that is already past the window.
+          await this.acknowledgeRun();
+          attempts++;
+          notes.push("A run was starting; watching for it to begin so the cancel can take hold.");
+        }
+        await delay(pollMs);
+        status = await look();
+        continue;
+      }
+
+      break;
+    }
+
+    const stopped = status.phase !== "running";
+    if (!stopped) notes.push("The instrument is still reporting a running protocol.");
+    // §7.8 step 5 — a user-initiated stop is not a fault, so anything here is about something
+    // else and is worth reporting separately rather than folding into "run cancelled".
+    let errors: string[] = [];
+    try {
+      errors = await this.errorList();
+    } catch {
+      /* the error list is a courtesy here; a stop that worked is still a stop */
+    }
+
+    return {
+      startedFrom,
+      stopped,
+      attempts,
+      resumed,
+      waitedForRead,
+      sawCancelledFlag,
+      status,
+      errors,
+      notes,
+      timedOut: !stopped && Date.now() - started >= timeoutMs,
+    };
+  }
+
+  // ---- actions ----------------------------------------------------------
+
+  /**
+   * Run one of the {@link CFX_COMMANDS} action commands.
+   *
+   * Deliberately does not throw on a non-zero code: the entries marked `unverified` are guesses at
+   * a command name, and "the instrument rejected it" is a result the caller should be able to
+   * show, not an exception to swallow. Check `.ok` on the response.
+   */
+  async runAction(name: CfxCommandName): Promise<CfxResponse> {
+    return this.tryCommand(CFX_COMMANDS[name].command);
+  }
+}

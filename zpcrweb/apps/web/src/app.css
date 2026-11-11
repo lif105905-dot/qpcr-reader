@@ -1,0 +1,5616 @@
+/* ============================================================================
+   Layout + components. Cyberpunk dark; tokens from theme.css.
+   ========================================================================== */
+
+.splash {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  color: var(--ink-muted);
+  letter-spacing: 0.1em;
+}
+
+/* ---- App shell ---------------------------------------------------------- */
+.app {
+  display: grid;
+  grid-template-rows: var(--header-h) auto 1fr;
+  height: 100%;
+  min-height: 0;
+}
+.app--empty {
+  grid-template-rows: var(--header-h) 1fr;
+  padding: 0;
+}
+.app__header,
+.app__brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  padding-inline: max(14px, env(safe-area-inset-left)) max(14px, env(safe-area-inset-right));
+  height: var(--header-h);
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--panel), transparent);
+}
+/* Also a <button> (it opens the About view), so it opts out of the global button chrome. */
+.app__logo {
+  flex: 0 0 auto;
+  /* Flex, not inline text: the collapsing "//web" is an `overflow: hidden` inline-block, whose
+     baseline is its bottom edge — as inline text it would drag the whole wordmark off-baseline. */
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  text-shadow: 0 0 12px var(--neon-cyan-dim);
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+/* Scroller around the view-tab strip: the strip's intrinsic width (~520px — the same seven tabs
+   for every file, since a tab a file has no answer for is disabled rather than dropped) is wider
+   than a phone viewport, so on narrow screens it scrolls horizontally inside the header rather
+   than stretching `.app__header` (and the whole `.app` grid) past the viewport. `flex: 0 1 auto`
+   + `min-width: 0` let it shrink down to whatever room the logo/drop-button leave; the `.segmented`
+   inside keeps its own intrinsic width so tabs clip-and-scroll instead of squashing. */
+.app__views {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.app__views::-webkit-scrollbar {
+  display: none;
+}
+.app__views .segmented {
+  min-width: max-content;
+  flex: 0 0 auto;
+}
+/* The header's DropZone (compact variant): never let its label shrink to nothing. */
+.app__header > .dropzone {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.app__logo:hover {
+  background: transparent;
+  text-shadow: 0 0 16px var(--neon-cyan);
+}
+.app__logo-z {
+  color: var(--neon-cyan);
+}
+.app__tag {
+  color: var(--ink-muted);
+}
+/* Narrow header: the wordmark, the seven tab labels and "load file" together overflow the
+   viewport, so the header goes iconographic — in four steps, driven by `data-fit`, which
+   `useHeaderFit` sets by measuring what actually fits (see that file for the level meanings and
+   for why this isn't a media query). Every label that goes still carries its word in a
+   `title`/`aria-label` (see `ViewBar`, `DropZone`, `Logo`), so nothing is lost to a screen
+   reader or a hover. `.app__brand` (the welcome screen, which has no tabs) has no `data-fit` and
+   so keeps the full mark — there's room for it there. */
+@media (max-width: 599px) {
+  .app__tag {
+    display: none;
+  }
+}
+/* Collapsing text shrinks to nothing rather than vanishing, so the tabs slide into place instead
+   of jumping. `--w` is the label's natural width, written by `useHeaderFit` — `max-width` has to
+   animate between two lengths, and `auto` isn't one. */
+.app__header .app__logo-rest,
+.app__header .segmented__label,
+.app__header .dropzone__compact-label {
+  display: inline-block;
+  max-width: var(--w, 12rem);
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    max-width 140ms ease,
+    opacity 110ms ease;
+}
+.app__header:not([data-fit="0"]) :is(.app__logo-rest, .dropzone__compact-label),
+.app__header:is([data-fit="2"], [data-fit="3"]) .segmented__item:not(.is-active) .segmented__label,
+.app__header[data-fit="3"] .segmented__label {
+  max-width: 0;
+  opacity: 0;
+}
+/* A tab whose label has gone keeps square padding — without the label that padding is the whole
+   tap target — and drops the icon/label gap, which would otherwise pad the empty label. */
+.app__header .segmented__item {
+  transition:
+    gap 140ms ease,
+    padding 140ms ease;
+}
+.app__header:is([data-fit="2"], [data-fit="3"]) .segmented__item:not(.is-active),
+.app__header[data-fit="3"] .segmented__item {
+  gap: 0;
+  padding-inline: 9px;
+}
+/* Same square-icon collapse as above, once the load button's own label is gone (level 1+). */
+.app__header .dropzone__compact {
+  transition: gap 140ms ease;
+}
+.app__header:not([data-fit="0"]) .dropzone__compact {
+  gap: 0;
+}
+.app__header:not([data-fit="0"]) .dropzone:not(.dropzone--large) {
+  padding-inline: 9px;
+}
+/* `useHeaderFit` probes each level by writing `data-fit` and reading the layout back; a
+   transition mid-probe would be measured half-finished. It also holds this through the first
+   commit so the header doesn't animate in from level 0 on load. */
+.app__header[data-measuring],
+.app__header[data-measuring] * {
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app__header,
+  .app__header * {
+    transition: none;
+  }
+}
+.app__header-spacer {
+  flex: 1;
+}
+.app__main {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  container: appmain / inline-size;
+}
+.app__error {
+  position: fixed;
+  inset-block-end: 12px;
+  inset-inline-end: 12px;
+  max-width: 60ch;
+  padding: 8px 12px;
+  background: rgba(255, 90, 90, 0.12);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  color: #ffd9d9;
+  z-index: 20;
+  /* The ✕ keeps its own column so a long message wraps beside it rather than under it — the
+     banner floats over the page, so it covers real controls until it is dismissed. */
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.app__errordismiss {
+  flex: none;
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.2;
+}
+.app__errordismiss:hover {
+  opacity: 1;
+}
+
+/* ---- About / welcome ---------------------------------------------------- */
+/* One view for both: credits plus the drop target, so the empty state and the logo's About page
+   are the same page. */
+.about {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+}
+.about__card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(56ch, 100%);
+  padding: clamp(20px, 5cqi, 40px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  text-align: center;
+}
+.about__privacy {
+  color: var(--ink-muted);
+}
+.about__warning {
+  color: var(--warn);
+}
+/* Inside the card the drop zone provides its own spacing, so it drops the standalone margins. */
+.about__card .dropzone--large {
+  justify-self: stretch;
+  margin: 14px 0 0;
+  padding: clamp(20px, 5cqi, 40px);
+}
+/* An <a href="#load=…"> rather than a button, so "Copy link address" works — styled as a
+   button, hence the display/text-decoration resets an anchor needs. */
+.about__example {
+  display: inline-block;
+  margin-block-end: 6px;
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--neon-cyan);
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms, box-shadow 120ms;
+}
+.about__example:hover,
+.about__example:focus-visible {
+  border-color: var(--neon-cyan);
+  background: var(--neon-cyan-dim);
+  box-shadow: 0 0 24px var(--neon-cyan-dim) inset;
+}
+.about__logo {
+  margin: 0;
+  font-size: clamp(22px, 5cqi, 32px);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 16px var(--neon-cyan-dim);
+}
+.about__logo::first-letter {
+  color: var(--neon-cyan);
+}
+.about__line {
+  margin: 0;
+  color: var(--ink-2);
+}
+.about__line a {
+  color: var(--neon-cyan);
+}
+.about__back {
+  margin-block-start: 10px;
+  color: var(--ink-2);
+}
+
+/* ---- DropZone ----------------------------------------------------------- */
+.dropzone {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms, box-shadow 120ms;
+}
+.dropzone--large {
+  margin: clamp(16px, 6cqi, 64px);
+  padding: clamp(24px, 8cqi, 72px);
+}
+.dropzone:not(.dropzone--large) {
+  padding: 6px 12px;
+}
+.dropzone--active,
+.dropzone:not(.dropzone--disabled):hover {
+  border-color: var(--neon-cyan);
+  background: var(--neon-cyan-dim);
+  box-shadow: 0 0 24px var(--neon-cyan-dim) inset;
+}
+.dropzone--disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.dropzone--disabled .dropzone__compact {
+  color: var(--ink-muted);
+}
+.dropzone__icon {
+  font-size: clamp(32px, 8cqi, 56px);
+  color: var(--neon-cyan);
+  text-shadow: 0 0 20px var(--neon-cyan-dim);
+}
+.dropzone__title {
+  font-size: clamp(15px, 3cqi, 20px);
+  color: var(--ink);
+}
+.dropzone__sub {
+  color: var(--ink-muted);
+}
+.dropzone__link {
+  color: var(--neon-cyan);
+}
+.dropzone__compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--neon-cyan);
+  font-size: 13px;
+}
+
+/* ---- Segmented control -------------------------------------------------- */
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.segmented__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 5px 12px;
+  border-radius: 4px;
+  color: var(--ink-2);
+}
+/* Icons (see `ViewIcons.tsx`) inherit the control's color, including the active tab's brighter
+   ink, and never shrink when the strip is tight. */
+.icon {
+  flex: 0 0 auto;
+  display: block;
+}
+.segmented__item:hover {
+  background: var(--raised-2);
+}
+.segmented__item.is-active {
+  background: var(--neon-cyan-dim);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--neon-cyan);
+}
+.segmented__item:disabled {
+  color: var(--ink-muted);
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.segmented__item:disabled:hover {
+  background: transparent;
+}
+.segmented--sm .segmented__item {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+/* ---- FileBar ------------------------------------------------------------ */
+.filebar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right));
+  overflow-x: auto;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--plane);
+}
+.filechip {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--panel);
+}
+.filechip.is-active {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 0 1px var(--neon-cyan-dim), 0 0 16px var(--neon-cyan-dim);
+}
+/* The run on the block right now — the run follower's running file (`FileBar`'s `runningId`), so
+   never more than one chip and only with an instrument connected. The bar's chips are otherwise flat
+   against the page, so a lit background is the one thing here that says "this file is not
+   finished"; it breathes slowly rather than sitting static, because the distinction it draws is
+   that the file is *changing*. Selection and staging still win on the border, which is what those
+   two states use, so a running chip can be selected and read as both at once. */
+.filechip.is-running {
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.1), rgba(34, 211, 238, 0.04));
+  animation: filechip-running 2.4s ease-in-out infinite;
+}
+.filechip.is-running .filechip__name {
+  color: var(--neon-cyan);
+}
+@keyframes filechip-running {
+  50% {
+    background: linear-gradient(180deg, rgba(34, 211, 238, 0.2), rgba(34, 211, 238, 0.08));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .filechip.is-running {
+    animation: none;
+  }
+}
+/* A chip that can't take the selection here — the Instrument view holding it on the running file
+   (`FileBar`'s `lockedTo`). Dimmed like a disabled button, but only the main part refuses the
+   pointer: its ✕ still closes the file, so it keeps its own cursor. Built from theme tokens and
+   opacity, so it follows the theme without a rule of its own. */
+.filechip.is-locked {
+  opacity: 0.45;
+}
+.filechip.is-locked .filechip__main {
+  cursor: not-allowed;
+}
+.filechip__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  max-width: 40ch;
+}
+@media (max-width: 599px) {
+  .filechip__main {
+    max-width: 22ch;
+  }
+}
+/* The chip's leading glyph carries two things at once: its *shape* is what the file is — run,
+   plate map or thermal protocol (`FileIcons.tsx`, grouping by `core`'s `fileCategory`, so the two
+   plate encodings look alike) — and its *color* is the encryption status the plain dot here used
+   to carry alone. The icon draws in `currentColor`, so the modifiers below only set `color`. */
+.filechip__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-muted);
+  flex: 0 0 auto;
+}
+/* Icon color mirrors the Overview panel's "Encrypted" block: green (not encrypted), orange
+   (encrypted, decrypted with the current password), red (encrypted, not yet opened). */
+.filechip__icon--none {
+  color: var(--good);
+}
+.filechip__icon--decrypted {
+  color: var(--warn);
+}
+.filechip__icon--locked {
+  color: var(--danger);
+}
+/* The active chip's glow, as before — a `drop-shadow` rather than a `box-shadow`, so it follows
+   the drawn strokes instead of haloing the icon's square box. */
+.filechip.is-active .filechip__icon--none {
+  filter: drop-shadow(0 0 4px var(--good));
+}
+.filechip.is-active .filechip__icon--decrypted {
+  filter: drop-shadow(0 0 4px var(--warn));
+}
+.filechip.is-active .filechip__icon--locked {
+  filter: drop-shadow(0 0 4px var(--danger));
+}
+/* A chip is two stacked lines — the run's name over its date — so the bar reads as a list of
+   experiments rather than of paths, and stays narrow enough for several to fit across a phone.
+   `min-width: 0` on the column is what lets the ellipsis below actually engage inside a flex
+   parent. */
+.filechip__text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+.filechip__name {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* Deliberately smaller and dimmer than the name: it is context, not identity. */
+.filechip__date {
+  font-size: 10px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+.filechip__meta {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+/* A run that ended without finishing its protocol, in the slot the date would have used (see
+   `FileBar`'s FileChip). Loud where the date is quiet — this is the one thing about the chip
+   that changes what its numbers mean. */
+.filechip__date--incomplete {
+  color: var(--danger);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+/* An experiment that hasn't been run, in the same slot and shape as INCOMPLETE above — the two are
+   easily confused (both hold fewer reads than their protocol asks for) so they have to read as
+   different states at a glance. Magenta, the app's instrument accent: this file is on its way *to*
+   an instrument, where an incomplete run is one that came back from one having gone wrong. */
+/* A run whose markers say it began and never ended, but which no connected instrument is running
+   (`FileBar`'s `inProgressIds` minus `runningId`). Amber and static: unlike INCOMPLETE it isn't
+   known to have gone wrong, and unlike the running glow nothing is known to be changing it. */
+.filechip__date--unfinished {
+  color: var(--warn);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.filechip__date--pending {
+  color: var(--neon-magenta);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.filecard {
+  pointer-events: none;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 10px 12px;
+  background: rgba(10, 14, 22, 0.96);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+.filecard__title {
+  font-size: 12px;
+  color: var(--ink);
+  word-break: break-word;
+}
+/* The file the run lives in — the question the chip stopped answering when it started showing
+   the experiment name instead. */
+.filecard__file {
+  font-size: 10px;
+  color: var(--ink-muted);
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+/* The library's own detailed type description (`fileKindDescription`) — e.g. "Plate: Bio-Rad
+   format" — the one place format detail replaces what used to be a bare tooltip on the type
+   column/chip icon. */
+.filecard__type {
+  font-size: 10px;
+  color: var(--ink-muted);
+  margin-bottom: 8px;
+}
+.filecard__dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 0 0 8px;
+  font-size: 11px;
+}
+.filecard__dl dt {
+  color: var(--ink-muted);
+}
+.filecard__dl dd {
+  margin: 0;
+  color: var(--ink-2);
+  text-align: right;
+}
+.filecard__section + .filecard__section {
+  margin-top: 8px;
+}
+.filecard__label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  margin-bottom: 4px;
+}
+.filecard__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.filecard__chip {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+}
+/* A chip carrying its positive/negative curve tally (Overview → Plate). The counts sit either
+   side of a small track whose fill is the positive fraction; the chip's own hue (the target's
+   channel color, via `currentColor`) carries the positives, so a chip reads at a glance without
+   introducing a second palette. */
+.chipcount {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-right: 5px;
+}
+.chipcount__name {
+  margin-right: 1px;
+}
+.chipcount__pos {
+  font-size: 10px;
+  color: var(--ink);
+}
+.chipcount__neg {
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+.chipcount__bar {
+  width: 22px;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  overflow: hidden;
+}
+.chipcount__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+}
+.filecard__empty {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.curvecard {
+  pointer-events: none;
+  min-width: 160px;
+  max-width: 280px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: rgba(10, 14, 22, 0.96);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+.curvecard__title {
+  font-size: 11px;
+  color: var(--ink);
+  margin-bottom: 2px;
+  word-break: break-all;
+}
+.curvecard__subtitle {
+  font-size: 10px;
+  color: var(--ink-muted);
+  margin-bottom: 6px;
+}
+.curvecard__rows {
+  font-size: 11px;
+}
+.curvecard__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+}
+.curvecard__row.is-dim {
+  opacity: 0.4;
+}
+.curvecard__swatch {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.curvecard__label {
+  flex: 0 0 auto;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.curvecard__sub {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+.curvecard__cq {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.curvecard__empty {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.curvecard__more {
+  font-size: 10px;
+  color: var(--ink-muted);
+  margin-top: 4px;
+}
+/* A column, so the ✕ can carry the modified dot beneath it (see `CloseFileButton`, whose optional
+   slot the dot goes in). The dot's row is reserved on every chip whether or not it shows one,
+   which is what lets a file become modified without the ✕ moving. */
+.filechip__del {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 9px;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+/* Fixed box, because the ✕ and the waste bin it arms into are not the same size: without it,
+   arming would widen the chip and shove the whole bar along. Shared by both places the close
+   button appears (`CloseFileButton.tsx`). */
+.closefile__glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  line-height: 1;
+}
+.filechip__moddot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: transparent;
+}
+/* Amber, the app's "attention, not error" colour: this file has work in it that the copy on
+   disk doesn't. Hidden once armed — the red button and the bin say it louder. */
+.filechip.is-modified .filechip__moddot {
+  background: var(--warn);
+}
+.filechip__del.is-armed .filechip__moddot {
+  background: transparent;
+}
+.filechip__del:hover {
+  background: rgba(255, 90, 90, 0.16);
+  color: var(--danger);
+}
+/* Armed: the file has edits that aren't on disk, and this click closes it and loses them (see
+   `CloseFileButton.tsx`). Solid rather than tinted — the first click changed what the button
+   *does*, so it has to stop looking like the same button it was. */
+.filechip__del.is-armed,
+.filechip__del.is-armed:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ---- FilesTableView ------------------------------------------------------ */
+/* Fills `<main>` in place of whatever view was showing (see `App.tsx`'s `store.view === "files"`).
+   Up to two panes stacked, each scrolling on its own: the open files, and — only when a folder has
+   been granted — the folders on disk. With no folders the first pane is the whole view, which is
+   the plain scrolling table this used to be.
+
+   Its own container for the folder panes' side-by-side query below: `app__main` is a container too,
+   but the question here is how much room *this view* has, and it is the thing that will grow a
+   sidebar or a split next. */
+.filesview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  container-type: inline-size;
+}
+.filesview__pane {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 12px;
+}
+/* The folders take a fixed 40% of the view and the catalog takes the rest. A *fixed* share rather
+   than one sized to its content: the panel is a place on screen, and one that grew as a folder was
+   expanded and shrank as it was collapsed would move the table above it every time — so opening a
+   branch would push the row you were reading somewhere else. Neither pane's content decides where
+   the boundary sits; both scroll inside their own half. */
+.filesview__pane--catalog {
+  flex: 1 1 auto;
+}
+/* The folders pane doesn't scroll itself: its two columns do, independently (`.folders` below),
+   so scrolling a long tree must not carry the file list off with it. */
+.filesview__pane--folders {
+  flex: 0 0 40%;
+  display: flex;
+  overflow: hidden;
+  border-top: 1px solid var(--border-strong);
+  padding-top: 8px;
+}
+.filesview__tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.filesview__tbl thead th {
+  padding: 0 6px;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+.filesview__tbl td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.filesview__row {
+  cursor: pointer;
+}
+.filesview__row:hover {
+  background: var(--raised-2);
+}
+.filesview__row.is-active {
+  background: color-mix(in srgb, var(--neon-cyan) 10%, transparent);
+}
+.filesview__typecol {
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+.filesview__kind {
+  display: inline-flex;
+  color: var(--ink-muted);
+  margin-right: 4px;
+  vertical-align: middle;
+}
+/* A file the app is holding but can't currently read — its folder's permission has lapsed. The
+   row stays; only the icon changes, and clicking it asks for the access back. */
+.filesview__kind.is-error {
+  color: var(--danger);
+}
+.filesview__filename {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+.filesview__link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.filesview__link:hover {
+  color: var(--neon-cyan);
+}
+.filesview__delcol {
+  width: 30px;
+  text-align: center;
+}
+.filesview__moddot {
+  display: inline-block;
+  margin-left: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--warn);
+}
+.filesview__empty {
+  padding: 24px 8px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.filesview__totals td {
+  border-bottom: 0;
+  border-top: 1px solid var(--border);
+  color: var(--ink-muted);
+  font-size: 11px;
+  padding-top: 10px;
+}
+/* The row's close button — the same control as the chip's, and the same component
+   (`CloseFileButton.tsx`): one click for a file that is a copy of something on disk, and a
+   ✕ → waste bin second click for one carrying edits that are nowhere else. */
+.ftbl__del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.ftbl__del:hover {
+  background: rgba(255, 90, 90, 0.16);
+  color: var(--danger);
+}
+.ftbl__del.is-armed,
+.ftbl__del.is-armed:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ---- FolderSection -------------------------------------------------------- */
+/* Two columns filling the Files view's lower pane: every granted folder's tree in the left one,
+   one group per folder under its own heading, and the files of whichever directory is picked in
+   the right one. Side by side when there is room, stacked when there isn't. A row here is a file
+   on *disk*, which the table's rows above are not; see `FolderSection.tsx`.
+
+   Tree indentation is an inline `padding-left` per depth rather than nested padding, so a deep
+   row's hover and its selected background still span the full width of the column. */
+.folders {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.folders__pane {
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+}
+/* Stacked, the two columns split the panel's fixed height between them — a share of the panel
+   rather than of the content, so the trees can never push the files they exist to reach off the
+   bottom, however many folders are expanded. Each scrolls in its own half. */
+.folders__pane--tree {
+  flex: 0 0 45%;
+}
+.folders__pane--files {
+  flex: 1 1 auto;
+  padding: 4px 0 6px;
+  border-top: 1px solid var(--border);
+}
+@container (min-width: 700px) {
+  .folders {
+    flex-direction: row;
+    align-items: stretch;
+  }
+  .folders__pane--tree {
+    flex: 0 0 clamp(180px, 28cqi, 340px);
+    border-right: 1px solid var(--border);
+  }
+  .folders__pane--files {
+    flex: 1 1 auto;
+    border-top: 0;
+  }
+}
+
+/* One folder's group in the tree column: its heading, then its tree. The heading sticks to the top
+   of the column while its own tree scrolls under it, so a folder half way down a long list still
+   says which folder you are reading. */
+.folders__folder {
+  margin-bottom: 6px;
+}
+.folders__head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.folders__collapse,
+.folders__twisty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.folders__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border: 0;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folders__title:hover {
+  background: var(--raised-2);
+}
+.folders__icon {
+  display: inline-flex;
+  color: var(--ink-muted);
+}
+.folders__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.folders__tree {
+  padding: 4px 0;
+}
+
+.folders__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.folders__note {
+  padding: 4px 10px;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+.folders__note--error {
+  color: var(--danger);
+}
+
+/* The type chips over the folder's file list — one per kind of file in this directory, narrowing
+   a long listing to the sort of file you came for. A filter, so nothing on is the whole listing,
+   which is why an off chip is dimmed rather than struck through: its files aren't excluded, they
+   just aren't being singled out. See `KindFilter.tsx`. */
+.kindfilter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 10px 6px;
+}
+.kindfilter__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 7px;
+  font-size: 10px;
+  opacity: 0.6;
+}
+.kindfilter__chip:hover {
+  opacity: 1;
+}
+.kindfilter__chip.is-on {
+  opacity: 1;
+  border-color: var(--neon-cyan);
+  background: color-mix(in srgb, var(--neon-cyan) 14%, transparent);
+  color: var(--neon-cyan);
+}
+.kindfilter__icon {
+  display: inline-flex;
+  color: var(--ink-muted);
+}
+.kindfilter__count {
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+.kindfilter__chip.is-on .kindfilter__icon,
+.kindfilter__chip.is-on .kindfilter__count {
+  color: inherit;
+}
+
+/* The breadcrumb above the file pane: what you are looking at, and every step back up. */
+.folders__crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 2px 10px 5px;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+.folders__crumb {
+  border: 0;
+  padding: 0 2px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.folders__crumb:hover {
+  color: var(--neon-cyan);
+}
+.folders__crumbsep {
+  opacity: 0.5;
+}
+
+.folders__dirrow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 8px;
+}
+.folders__dirrow:hover {
+  background: var(--raised-2);
+}
+/* Which directory the file pane is showing — the one piece of state tying the two panes together,
+   so it uses the app's existing "this one is active" idiom rather than a colour of its own. */
+.folders__dirrow.is-selected {
+  background: color-mix(in srgb, var(--neon-cyan) 12%, transparent);
+  color: var(--neon-cyan);
+}
+/* The heading stands in for a tree row that a folder's own root doesn't have, so it marks the same
+   state the same way. Only ever one at a time now that one file column serves every folder, so a
+   filled pill says exactly what it means: this is the folder you are looking into. */
+.folders__title.is-selected {
+  background: color-mix(in srgb, var(--neon-cyan) 12%, transparent);
+  color: var(--neon-cyan);
+}
+.folders__dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  padding: 3px 0;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The chevron turns on the row's own state, since a lazily-listed node is not a <details> — its
+   children do not exist until it is opened. */
+.rail__chevron.is-open {
+  transform: rotate(90deg);
+}
+.folders__file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 10px;
+  font-size: 11px;
+  text-align: left;
+  color: var(--ink);
+}
+.folders__file:hover {
+  background: var(--raised-2);
+}
+/* The file a click has selected — the same "this one is active" idiom as the directory row above,
+   since a click here selects rather than navigating away (see `FolderSection.tsx`). */
+.folders__file.is-selected {
+  background: color-mix(in srgb, var(--neon-cyan) 12%, transparent);
+}
+.folders__check {
+  flex: 0 0 auto;
+  margin: 0;
+  cursor: pointer;
+}
+.folders__kind {
+  display: inline-flex;
+  width: 14px;
+  color: var(--ink-muted);
+}
+/* Every file name here is a target: a click selects it, a double-click opens it — including one
+   that is only on disk, which the double-click reads first. */
+.folders__name {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.folders__file.is-loaded .folders__name {
+  color: var(--neon-cyan);
+}
+.folders__meta {
+  margin-left: auto;
+  padding-left: 12px;
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+/* The welcome screen's second route in, under "click to browse". */
+.dropzone__folderbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--neon-cyan);
+  cursor: pointer;
+}
+.dropzone__folderbtn:hover {
+  text-decoration: underline;
+}
+
+/* Larger tap targets for touch input. `pointer: coarse` never matches a mouse, so this never
+   applies on desktop regardless of viewport width. */
+@media (pointer: coarse) {
+  .segmented__item {
+    min-height: 34px;
+    padding: 8px 14px;
+  }
+  .filechip__main {
+    padding: 6px 4px;
+  }
+  .filechip__del {
+    min-width: 34px;
+    padding: 0 12px;
+  }
+  .rail__link {
+    padding: 6px 0;
+  }
+}
+
+/* ---- Overview ----------------------------------------------------------- */
+.overview {
+  height: 100%;
+  overflow: auto;
+  padding: clamp(12px, 3cqi, 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+/* The run's name, and under it when it ran and where it lives. First thing in the view, and the
+   only place the name can be edited (see `OverviewView`'s ExperimentHeader). */
+/* A run still being written to by an instrument, read from its own `begun`/`ended` markers (see
+   `OverviewView`). Sits directly under the run's name because it qualifies the whole page: every
+   number below it is a partial answer that will change. */
+.overview__running {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--neon-cyan);
+  border-radius: var(--radius-sm);
+  background: rgba(34, 211, 238, 0.07);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.overview__runningdot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--neon-cyan);
+  animation: overview-running 1.6s ease-in-out infinite;
+}
+@keyframes overview-running {
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .overview__runningdot {
+    animation: none;
+  }
+}
+
+/* A run that stopped short of its protocol (see `OverviewView`'s IncompleteBanner). Same shape as
+   the running banner and the opposite colour: that one says "wait", this one says "read this
+   with care". Nothing animates — the state is final. */
+.overview__incomplete {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 90, 90, 0.08);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.overview__incompletemark {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+/* A run that began and never ended but that no connected instrument is running (see
+   `OverviewView`'s UnfinishedBanner). Same shape again, in the amber of the chip's UNFINISHED: not
+   known to have gone wrong, not known to be changing. Nothing animates. */
+.overview__unfinished {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.overview__unfinishedmark {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+/* An experiment that hasn't been run yet (see `OverviewView`'s PendingBanner). Same shape as the
+   two banners above, in magenta — the colour the app already uses for the instrument, which is
+   where this file is headed. Nothing animates: unlike a run in progress, nothing here changes
+   except by the reader's own next action. */
+.overview__pending {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--neon-magenta);
+  border-radius: var(--radius-sm);
+  background: var(--neon-magenta-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.overview__pendingmark {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--neon-magenta);
+}
+
+/* A pending experiment with nothing left to supply (see `OverviewView`'s ReadyToRun). The same
+   shape as the banners above and the same magenta as the pending one — it is the end of that
+   state, not a different subject — but filled a shade stronger, since unlike them it is a thing to
+   act on rather than a thing to know. */
+.overview__ready {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--neon-magenta);
+  border-radius: var(--radius-sm);
+  background: var(--neon-magenta-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.overview__readymark {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--neon-magenta);
+}
+/* A button that reads as a link: it navigates rather than acting, so it should look like the way
+   there and not like a second Start. */
+.overview__readylink {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--neon-magenta);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.overview__readylink:hover {
+  background: transparent;
+  color: var(--neon-cyan);
+}
+
+/* The two halves a pending experiment is assembled from, side by side — one column each, stacking
+   on a narrow viewport like every other pair in the app. */
+.overview__parts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.overview__part {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+}
+.overview__partlabel {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+/* The controls for one half, side by side — "new protocol" beside "attach protocol". Wraps rather
+   than squeezing, since the attach menu's trigger carries a word rather than an icon. */
+.overview__partactions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* "attached" / "required to start" / "optional" — the state of that half, in the same three tones
+   the rest of the app uses for good/blocking/merely-worth-knowing. */
+.overview__partok {
+  color: var(--good);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.overview__partmissing {
+  color: var(--warn);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* A run that came in without a plate, so its wells have no names (see `OverviewView`). A note
+   rather than a banner: the run is over and this is a fact about it, not something to act on. */
+.overview__missing {
+  padding: 8px 12px;
+  border-left: 2px solid var(--warn);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* The headline row. Was a lone input and needed no layout; it now carries a second child in both of
+   its states — the "required" marker while unnamed, the edit button once the run has happened — so
+   the two sit on one line with the name taking the room. */
+.overview__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Styled as a heading, not as a form field: no border or background until it is interacted
+   with, so the name reads as a title while still being obviously editable on hover. */
+.overview__name {
+  width: 100%;
+  max-width: 40ch;
+  padding: 2px 6px;
+  margin-left: -6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: clamp(20px, 3.2cqi, 28px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+}
+.overview__name:hover {
+  border-color: var(--border);
+}
+.overview__name:focus {
+  outline: none;
+  background: var(--plane);
+  border-color: var(--neon-cyan);
+}
+/* An experiment with no name yet — the one thing standing between it and being started, and the
+   reason its Overview is where you land on creating one. It gets the app's `--danger` red rather
+   than the warn orange the small asterisk used to: a heading-sized field with only a placeholder in
+   it reads as *empty*, not as *unanswered*, and empty looks like nothing to do. Red plus the word
+   "required" beside it is what makes the next action unmissable. The red survives focus (below),
+   since it is a statement about the value and not about the field being active. */
+.overview__name.is-missing {
+  border-color: var(--danger);
+  background: rgba(255, 90, 90, 0.06);
+}
+.overview__name.is-missing:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px rgba(255, 90, 90, 0.35), 0 0 18px rgba(255, 90, 90, 0.14);
+}
+.overview__name.is-missing::placeholder {
+  color: var(--danger);
+  opacity: 0.75;
+}
+/* The word, not an asterisk: an asterisk is a convention that has to be known, and there is room
+   here for the requirement to simply say itself. */
+.overview__namerequired {
+  flex: 0 0 auto;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The same headline once the experiment has run: a heading, not a field. See `ExperimentHeader` for
+   why — the name is part of the record by then, so changing it goes through the button beside it
+   rather than being permanently one keystroke from being overwritten. Matches `.overview__name`'s
+   type exactly, so the two states are the same headline in the same place rather than a layout
+   change when the edit opens. */
+.overview__nametext {
+  margin: 0;
+  padding: 2px 0;
+  color: var(--ink);
+  font-size: clamp(20px, 3.2cqi, 28px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Sits with the heading rather than in the toolbar column, because it acts on the heading and not
+   on the file — the toolbar's own Rename button is the *filename*'s, a different identity.
+
+   Dimmed but always drawn, never hover-only. It is the only way to rename an experiment, and a
+   control that appears on hover cannot be found by someone who doesn't already know it is there —
+   or reached at all on a touch screen, which has no hover to give. The toolbar's three buttons are
+   likewise always present; this is the same affordance in the row it belongs to. */
+.overview__nameeditbtn {
+  flex: 0 0 auto;
+  opacity: 0.5;
+  transition: opacity 120ms;
+}
+.overview__title:hover .overview__nameeditbtn,
+.overview__nameeditbtn:hover,
+.overview__nameeditbtn:focus-visible {
+  opacity: 1;
+}
+/* Info table + file buttons side by side, so the buttons reserve their own column instead of
+   pushing the table (or anything below) down a row. */
+.overview__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+/* Download / edit / clone, stacked down the right of the info table (`views/OverviewPanel.tsx`) —
+   a column rather than a row so the group stays one button wide however many tools it grows,
+   and reads as the panel's own toolbar rather than as a caption over the table. */
+.overview__toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* The "Filename" row in rename mode — same editable-field look as `.overview__name`, just at
+   the info table's own (smaller, monospace) type size instead of the headline's. */
+.overview__filename-input {
+  width: 100%;
+  max-width: 40ch;
+  padding: 1px 4px;
+  margin: -1px -4px;
+  background: var(--plane);
+  border: 1px solid var(--neon-cyan);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: inherit;
+}
+.overview__filename-input:focus {
+  outline: none;
+}
+.overview__h {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--neon-cyan);
+  margin: 0 0 8px;
+}
+/* A section heading with its own download/clone buttons beside it (the thermal protocol's
+   .prcl.txt). The heading keeps its bottom margin, so the row aligns with sections that have no
+   buttons. */
+.overview__blockhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+/* Groups the buttons as one flex child of `.overview__blockhead` so `space-between` puts only
+   two things in the row — the heading and this group — instead of spacing each button out on
+   its own and stranding one in the middle. */
+.overview__blocktools {
+  display: flex;
+  gap: 6px;
+}
+.overview__dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 18px;
+  margin: 0;
+  font-size: 12px;
+}
+.overview__dl dt {
+  color: var(--ink-muted);
+}
+.overview__dl dd {
+  margin: 0;
+  color: var(--ink-2);
+  word-break: break-all;
+}
+/* The file/run info table every Overview leads with, beside the download button when there is
+   one — a two-column label/value list (see `.overview__dl`) carrying filename/mtime and the
+   kind-specific facts (run date, encryption, archive identity, plate/protocol details, …). */
+.overview__infotable {
+  flex: 1;
+  min-width: 0;
+  grid-template-columns: max-content 1fr;
+  column-gap: 18px;
+  row-gap: 6px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+/* Phone: the head wraps instead of squeezing the info table against the download button, and
+   the definition list drops to one column so long values get their own line instead of being
+   crushed into a sliver next to the label column. */
+@container appmain (inline-size < 560px) {
+  .overview__head {
+    flex-wrap: wrap;
+  }
+  /* Wrapped below the table, the button column would be a tall stack against the left edge —
+     back to a row, which is what "under the table" wants to be. */
+  .overview__toolbar {
+    flex-direction: row;
+  }
+  .overview__dl {
+    grid-template-columns: 1fr;
+    gap: 2px 0;
+  }
+  .overview__dl dt {
+    margin-top: 6px;
+  }
+  .overview__dl dt:first-child {
+    margin-top: 0;
+  }
+}
+.overview__enc {
+  font-size: 15px;
+  font-weight: 600;
+}
+.overview__enc--none {
+  color: var(--good);
+}
+.overview__enc--decrypted {
+  color: var(--warn);
+}
+.overview__enc--locked {
+  color: var(--danger);
+  font-size: 22px;
+}
+.overview__enc-password {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+.overview__platelists {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+.overview__platelist {
+  flex: 1 1 240px;
+  min-width: 200px;
+}
+.overview__platelist-h {
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+/* Text/controls beside the grid rather than stacked above it, so the whole panel's height is
+   set by the taller of the two (usually the grid) instead of their sum. */
+.refcal {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.refcal__side {
+  flex: 1 1 240px;
+  min-width: 200px;
+  max-width: 320px;
+}
+.refcal__side .overview__h {
+  margin-bottom: 6px;
+}
+.refcal__side .segmented {
+  margin: 6px 0;
+}
+.refcal__gridwrap {
+  flex: 2 1 420px;
+}
+.refcal__note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.refcal__note code {
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+}
+/* Higher specificity than `.decoded__grid td` so the highlight wins. */
+.refcal__grid td.refcal__drift-big {
+  color: var(--neon-magenta);
+  font-weight: 600;
+}
+.refcal__grid th {
+  white-space: nowrap;
+  padding: 2px 8px;
+}
+.refcal__grid td {
+  padding: 1px 8px;
+}
+.refcal__grid tbody th {
+  color: var(--ink-2);
+}
+.refcal__legend {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+/* ---- Reference view --------------------------------------------------------
+   Reuses the Curves view's rail+plot grid (`.curves`), but sits inside a page that also
+   scrolls to the reference-vs-factory table below it, so the chart gets a fixed height
+   instead of `.curves`' `height: 100%`. */
+.reference {
+  height: 100%;
+  overflow: auto;
+  padding: clamp(12px, 3cqi, 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.reference__chart {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  height: 520px;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* ---- Curves view -------------------------------------------------------- */
+.curves {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  height: 100%;
+  min-height: 0;
+  /* Anchor for the landscape-phone drawer below: the rail and its toggle/scrim are positioned
+     against this box. Harmless on desktop/portrait — they're `display: none` there. */
+  position: relative;
+}
+.curves__rail {
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+}
+.curves__plot {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  padding: 10px;
+}
+/* The plot's own corner control — CFX keeps Log Scale down here rather than in the rail, where it
+   reads as one of the analysis settings and looks like it might change the Cq it is drawn
+   against. It does not: it is a view toggle and nothing it changes reaches the table. Sits above
+   the canvas so it stays clickable, and out of the way of the curve area's own pointer work by
+   being in the corner the axes never reach. */
+.plot__scale {
+  position: absolute;
+  right: 22px;
+  bottom: 18px;
+  z-index: 3;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border: 1px solid var(--line);
+}
+.plot__scale .toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.plot__scale .toggle__label {
+  margin: 0;
+}
+/* Landscape-phone drawer controls for `.curves__rail` (see the media query further below).
+   `display: none` here so desktop and portrait never show a toggle button or scrim — the rail
+   stays a permanent column there. Scoped to `.curves` only: `.reference__chart` reuses
+   `.curves__rail` but is a scrolling page, not a viewport-filling grid, and must not pick up
+   the drawer. */
+.curves__railtoggle {
+  display: none;
+}
+.curves__scrim {
+  display: none;
+}
+.rail__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-muted);
+  margin-bottom: 8px;
+}
+.rail__title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rail__details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.rail__details > summary::-webkit-details-marker {
+  display: none;
+}
+.rail__details > summary > .rail__link {
+  cursor: default;
+}
+.rail__chevron {
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--ink-muted);
+  transition: transform 0.15s ease;
+}
+.rail__details[open] > summary > span > .rail__chevron {
+  transform: rotate(90deg);
+}
+.rail__link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--neon-cyan);
+  opacity: 0.75;
+}
+.rail__link:hover {
+  background: transparent;
+  opacity: 1;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.switch__track {
+  position: relative;
+  width: 26px;
+  height: 15px;
+  border-radius: 8px;
+  background: var(--raised-2);
+  border: 1px solid var(--border);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.switch__track::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.switch.is-on {
+  color: var(--ink);
+}
+.switch.is-on .switch__track {
+  background: var(--neon-magenta-dim);
+  border-color: var(--neon-magenta);
+}
+.switch.is-on .switch__track::after {
+  background: var(--neon-magenta);
+  transform: translateX(11px);
+}
+.rail__icon-btn {
+  display: inline-flex;
+  align-items: center;
+}
+.rail__row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.rail__stat {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.rail__note {
+  color: var(--neon-magenta);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Narrow: stack the rail above the plot. `.curves` itself becomes the scroll container (one
+   column, page-style vertical scroll) — the rail no longer clips itself to a short internal
+   box, so the well matrix and every other rail section lay out at full height instead of being
+   cut off mid-grid. The Table view mode's `.analysis__table-wrap` keeps its own `overflow: auto`
+   (see below), which still lets it scroll horizontally without widening the page. */
+@container appmain (inline-size < 720px) {
+  .curves {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    overflow-y: auto;
+  }
+  .curves__rail {
+    overflow: visible;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .curves__plot {
+    min-height: clamp(300px, 55cqb, 480px);
+  }
+  /* `.reference__chart` is itself a flex child of `.reference` on this view (the desktop rule
+     below gives it a fixed 520px height + `overflow: hidden` for the bordered two-pane box).
+     Left at `min-height: 0` here, the flex-shrink algorithm's automatic minimum size collapses
+     it to whatever's left over, so the rail and chart silently overflow underneath
+     `RefCalPanel` instead of showing — `min-height: auto` (content-based) plus `overflow:
+     visible` (no clipping) is what actually lets it take the height its content needs. */
+  .reference__chart {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    height: auto;
+    min-height: auto;
+    overflow: visible;
+  }
+}
+
+/* Tighter phone step: reduce the rail's own padding/gaps and let its rows wrap instead of
+   overflowing, on top of the narrow stacking above. */
+@container appmain (inline-size < 560px) {
+  .curves__rail {
+    padding: 10px;
+    gap: 12px;
+  }
+  .rail__row {
+    flex-wrap: wrap;
+  }
+  .overview,
+  .reference {
+    padding: 10px;
+  }
+}
+
+/* ---- Landscape phone: compact chrome + rail-as-drawer --------------------
+   Deliberately keyed on `orientation`/`max-height`, not `pointer: coarse` (untestable in
+   headless Chrome) and not a container query (this needs the *viewport's* short-side height,
+   which a container query can't see). A desktop window shorter than 560px gets the same
+   treatment, which is fine — it's rare and benefits too.
+
+   In a landscape phone (e.g. 844×390 or 740×360) the 320px rail column and the 86px of
+   header+filebar chrome leave a cramped chart; below, the header shrinks, the rail becomes an
+   overlay drawer, and the chart takes nearly the whole viewport.
+
+   This block is deliberately the last thing in the file that touches `.curves`/`.app__views`/
+   `.filebar`, so it wins ties against the `@container appmain (inline-size < 720px)` rule above
+   by source order: that container query can also match a landscape phone's `.app__main` width at
+   some sizes (e.g. 740px wide), but the rules here are the more specific intent for this
+   viewport shape and must not have to fight it. */
+@media (orientation: landscape) and (max-height: 560px) {
+  :root {
+    --header-h: 40px;
+  }
+  .app__logo {
+    font-size: 13px;
+  }
+  .app__views .segmented__item {
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+  .filebar {
+    padding: 3px 12px;
+    padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right));
+    gap: 4px;
+  }
+  .filechip__main {
+    padding: 3px 6px;
+    gap: 5px;
+  }
+  .filechip__del {
+    padding: 0 6px;
+  }
+
+  /* The rail becomes a togglable overlay drawer instead of a permanent column — see
+     `CurvesView.tsx`'s `railOpen` state, which puts `is-railopen` on this root element. Both the
+     chart mode and Table mode use the same rail, so both get the drawer.
+
+     Two rows, not one: the drawer handle is a grid child in normal flow, so it gets its own short
+     row rather than floating over the chart's first y-axis label (or, in Table mode, over the
+     sticky header). The rail and scrim are out of flow, so they claim no row. */
+  .curves {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .curves__plot {
+    height: 100%;
+    min-height: 0;
+    padding: 0 6px 6px;
+  }
+  /* Table mode's own height/padding override lives next to `.analysis__table-wrap`'s base rule
+     further down the file (it must come after that rule to win the padding tie). */
+  .curves__railtoggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    justify-self: start;
+    margin: 5px 0 4px 8px;
+    /* Positioned only so `z-index` applies: the handle stays above the open drawer (which the
+       rail's own `padding-top` keeps clear of it), so it can also close what it opened. */
+    position: relative;
+    z-index: 16;
+    font-size: 12px;
+    padding: 4px 10px;
+  }
+  .curves__scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 14;
+    background: rgba(0, 0, 0, 0.5);
+  }
+  .curves__rail {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 15;
+    width: min(340px, 80vw);
+    height: auto;
+    overflow-y: auto;
+    /* Clears the drawer handle, which paints above the rail (see `.curves__railtoggle`). */
+    padding-top: 38px;
+    background: var(--panel);
+    border-right: 1px solid var(--border-strong);
+    border-bottom: 0;
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.5);
+    transform: translateX(-100%);
+    transition: transform 200ms ease;
+  }
+  .curves.is-railopen .curves__rail {
+    transform: translateX(0);
+  }
+}
+
+/* ---- Channel bar -------------------------------------------------------- */
+.chanbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 6px;
+}
+.chanchip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  opacity: 0.4;
+}
+.chanchip.is-on {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--chan) 60%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--chan) 22%, transparent);
+}
+.chanchip.is-disabled {
+  opacity: 0.22;
+  cursor: not-allowed;
+}
+.chanchip__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--chan);
+  flex: 0 0 auto;
+}
+.chanchip__label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+  min-width: 0;
+}
+.chanchip__ch {
+  font-size: 11px;
+  color: var(--ink);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chanchip__dye {
+  font-size: 10px;
+  color: var(--ink-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Calibration view: the rail's chip bars are grouped by plate/tube type, since the archive ships
+   every dye twice (once per tube type) and the pair are different measurements of the same dye.
+   A sub-heading inside one `.rail__section`, so the group reads as part of "Calibrations" rather
+   than as two sections. */
+.calgroup + .calgroup {
+  margin-top: 10px;
+}
+/* Dye names here are full product names ("Cal Orange 560", "Quasar 705"), not the short
+   fluorophore labels the Curves rail carries, so the shared chip grid gets wider columns rather
+   than ellipsing most of the list. */
+.calgroup .chanbar {
+  grid-template-columns: repeat(auto-fill, minmax(122px, 1fr));
+}
+.calgroup__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  margin-bottom: 6px;
+}
+/* Marks the tube type this run's own plate resolves to — the group holding the calibrations the
+   analysis actually reads. */
+.calgroup__tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--ink-2);
+}
+
+/* The Reference view's column chips used to need their own `.refchip*` rules: the chip was a
+   `<div>` wrapping a toggle button and a second "only" button, so it couldn't ride the base
+   `button` styling `.chanchip` gets. They now go through the shared `ChipBar` like every other
+   rail bar (double-click solos, no "only" button), so `.chanchip` alone covers them. */
+
+/* ---- Well matrix -------------------------------------------------------- */
+/* `minmax(0, 19px)` — not a bare `1fr` — caps how wide a column can grow: Grid's track-sizing
+   algorithm distributes a grid's free space to every track up to its own growth limit, which
+   applies to any `minmax()` track (not only ones using `fr`), so this still divides the rail's
+   width evenly across up to about 15 columns exactly as `1fr` did (19px is what a full
+   12-column CFX grid already comes out to at this rail's width) and only kicks in as an actual
+   cap once there are too few columns to use all the free space, e.g. Biomeme's single row of
+   3-9 tube positions (`biomeme.ts`) — which used to divide that same free width across far
+   fewer tracks and grow each cell well past the size every CFX run's grid uses, for no reason
+   tied to the wells themselves.
+   (`min(1fr, 19px)` looks like the obvious way to spell "grow like 1fr, capped at 19px" but is
+   invalid CSS: an `fr` value cannot appear inside `min()`/`max()`/`clamp()`, only directly in a
+   grid track sizing function — using it silently invalidates the whole `grid-template-columns`
+   declaration in every engine tested, collapsing the grid to one column.)
+
+   The leading row-header column is capped the same way, at the same size, rather than left
+   `auto` (content-sized): a single-row plate's row-header button is empty (see `WellMatrix`'s
+   `cellLabel` — there's no row letter to size around when there's only one row), and an `auto`
+   track with nothing sizing it plus every cell's `aspect-ratio: 1` turned into a runaway
+   feedback loop in testing — the empty button's width was resolved from the *row's* height,
+   which a bare `auto` row track will stretch to fill a grid container's available block space
+   when nothing else constrains it, which then fed back into the column's own width via
+   `aspect-ratio`, compounding across both grid dimensions into a corner button (and its whole
+   row) hundreds of pixels across. A fixed track sidesteps the indeterminate auto-sizing
+   entirely; for the normal row-lettered case it's indistinguishable from the old `auto` sizing,
+   since "A"–"H" already fit well inside it. */
+.wellmatrix.is-sweeping {
+  cursor: crosshair;
+}
+.wellmatrix.is-sweeping .wm-cell {
+  /* A sweep is one gesture across many cells: nothing under it should show a hover cue, and the
+     text must not start selecting as the pointer travels. */
+  user-select: none;
+}
+.wellmatrix {
+  display: grid;
+  grid-template-columns: minmax(0, 19px) repeat(var(--cols), minmax(0, 19px));
+  gap: 3px;
+}
+.wm-corner,
+.wm-head {
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 10px;
+  padding: 0;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+}
+.wm-head:hover,
+.wm-corner:hover {
+  color: var(--neon-cyan);
+}
+.wm-cell {
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--raised);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* "This well has a curve that crossed its threshold." A square SVG cross sized off the cell —
+   the cell is only ~14px across at rail width — so it centers on the cell's own box rather than
+   on a text baseline. Color and opacity are set inline: the cell's sample-type border color, and
+   `plusOpacity()` of the well's lowest Cq. */
+.wm-cell__plus {
+  width: 72%;
+  height: 72%;
+  display: block;
+  pointer-events: none;
+}
+/* Hover cue. The outline, not the border color, is what actually carries it: a cell with a
+   sample type sets `border-color` inline, which outranks any rule here, so a colored cell would
+   otherwise show nothing at all. `is-peek` is the same cue applied to a whole row or column from
+   its hovered header — see `WellMatrix`'s `groupHover` — so a header and a cell mark their wells
+   identically. */
+.wm-cell:hover,
+.wm-cell.is-peek {
+  border-color: var(--border-strong);
+  outline: 1px solid var(--ink-muted);
+  outline-offset: 1px;
+}
+/* Sample-type quick selectors, in the Wells section's heading row (`WellTypeBar`). Sized to sit
+   inside that row's line rather than to be a bar of its own: the grid below is the control, these
+   are shortcuts into it. `--wt` is the type's own color from `SAMPLE_TYPE_META`, so a chip reads
+   as the cells it selects. Three states, matching the wells it covers — all on (filled), some on
+   (outlined) and none (muted) — since a type is rarely all-or-nothing once wells are picked by
+   hand. `margin-right: auto` pushes the reset button to the far end of the row, where it sits on
+   every other section. */
+.welltypes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-right: auto;
+}
+.welltype {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  padding: 3px 4px;
+  cursor: pointer;
+}
+.welltype:hover {
+  border-color: var(--wt);
+  color: var(--wt);
+}
+.welltype.is-some {
+  border-color: color-mix(in srgb, var(--wt) 55%, transparent);
+  color: var(--wt);
+}
+.welltype.is-on {
+  border-color: var(--wt);
+  background: color-mix(in srgb, var(--wt) 22%, transparent);
+  color: var(--ink);
+}
+.wm-cell.is-on {
+  background: var(--neon-cyan-dim);
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 6px var(--neon-cyan-dim);
+}
+/* ---- Toggles ------------------------------------------------------------ */
+.toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  /* Without this, a long label (e.g. "COLOR SEPARATION") stretches the segmented control
+     below it to match the label's width instead of the control's own content. */
+  align-items: flex-start;
+}
+.toggle__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+}
+
+/* ---- Chart -------------------------------------------------------------- */
+.chart {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+}
+.chart__host {
+  height: 100%;
+  width: 100%;
+}
+.chart__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  color: var(--ink-muted);
+  pointer-events: none;
+  padding: 20px;
+}
+.chart__tip {
+  position: absolute;
+  transform: translate(14px, 22px);
+  pointer-events: none;
+  z-index: 10;
+  min-width: 150px;
+  padding: 8px 10px;
+  background: rgba(10, 14, 22, 0.94);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+.chart__tip-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+/* The well's sample name — free text from the plate, so it gets its own line rather than a
+   cell in the numeric table, and a long name truncates instead of stretching the card. */
+.chart__tip-sample {
+  max-width: 260px;
+  margin: -2px 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ink);
+}
+.chart__tip-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.chart__tip-dye {
+  margin-left: auto;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+.chart__tip-tbl {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+.chart__tip-tbl td {
+  padding: 1px 0;
+}
+.chart__tip-tbl td:first-child {
+  color: var(--ink-muted);
+  padding-right: 14px;
+}
+.chart__tip-tbl td:last-child {
+  text-align: right;
+  color: var(--ink);
+}
+/* The row for the line actually under the cursor, among the levels the Calibration tooltip
+   lists: the others are context, so they stay muted and this one comes forward. */
+.chart__tip-tbl tr.is-active td {
+  color: var(--ink);
+  font-weight: 600;
+}
+.chart__tip-mark {
+  margin-left: -9px;
+  padding-right: 2px;
+  font-weight: 400;
+}
+.chart__tip-note {
+  color: var(--ink-muted);
+}
+
+/* ---- Thermal profile (the .alf trace under a run's Protocol tab) ----------
+   `.chart` sizes itself to its container, and this one's container is a section of a scrolling
+   page rather than a viewport-filling grid — so it gets an explicit height, the way
+   `.reference__chart` does. Tall enough that a 95→60 cycle's two levels stay distinguishable,
+   short enough that the protocol above it is still on screen. */
+.thermal {
+  height: 300px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px 2px;
+}
+/* "Plate reads" in the caption above, coloured as the plot draws them — a legend that reads as
+   the sentence explaining the plot, rather than a key the reader has to map onto it. Only the
+   reads need one: the trace itself is a single line, so nothing about it has to be decoded. */
+.thermal__key {
+  font-weight: 600;
+}
+.thermal__key--read {
+  color: var(--neon-magenta);
+}
+/* The live chart in the Instrument rail's Status section: same `.thermal` box, but shorter — the
+   rail is a narrow column of stats, not a page section, so 300px would push everything below it
+   off screen. */
+.thermal--live {
+  height: 140px;
+  margin-top: 4px;
+}
+.thermal__gap-note {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink-muted);
+}
+
+/* ---- Raw files view ----------------------------------------------------- */
+.raw {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) 1fr;
+  height: 100%;
+  min-height: 0;
+}
+.raw__list {
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  padding: 8px;
+}
+.raw__grouphead {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--neon-cyan);
+  padding: 10px 6px 4px;
+}
+.raw__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 4px;
+}
+.raw__item:hover {
+  background: var(--raised);
+}
+.raw__item.is-active {
+  background: var(--neon-cyan-dim);
+  color: var(--ink);
+}
+.raw__viewer {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.raw__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.raw__fname {
+  font-size: 12px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.raw__size {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+.raw__modes {
+  margin-left: auto;
+}
+.raw__dump {
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  white-space: pre;
+}
+.raw__more {
+  margin: 10px;
+  align-self: flex-start;
+}
+.raw__download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink-2);
+  border-radius: 4px;
+  padding: 5px;
+  cursor: pointer;
+}
+.raw__download:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--ink);
+}
+.raw__download:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Narrow: stack raw list above viewer. The list is capped to a fraction of the viewport (not
+   left at 30% of a possibly-tall grid row) so the viewer below always keeps real room, and the
+   toolbar wraps instead of squeezing the filename/mode buttons together. */
+@container appmain (inline-size < 640px) {
+  .raw {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .raw__list {
+    max-height: 30vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .raw__toolbar {
+    flex-wrap: wrap;
+  }
+}
+
+/* ---- Plates view ---------------------------------------------------------
+ * Flex, not `.raw`'s grid: the plate-list sidebar is conditional (only shown for
+ * multiple plates), and a grid's fixed column tracks would strand the lone
+ * `.plateview__main` child in the narrow first track when there's no sidebar to
+ * fill the other one. Flex lets the single child claim the full width naturally. */
+.plateview {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+.plateview__list {
+  flex: 0 0 clamp(220px, 22cqi, 280px);
+  overflow-y: auto;
+}
+.plateview__main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px;
+}
+.plateview--empty {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.plateview__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+@container appmain (inline-size < 640px) {
+  .plateview {
+    flex-direction: column;
+  }
+  .plateview__list {
+    flex: 0 0 auto;
+    max-height: 30%;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+@container appmain (inline-size < 560px) {
+  .plateview__main {
+    padding: 10px;
+  }
+}
+
+/* A single-file "Raw files" tab (standalone .pltd/.plt.csv entries) — same look as `.raw`'s
+ * right-hand pane, minus the file-list sidebar and its grid. */
+.raw--solo {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Two-option download menu (`<details>`/`<summary>`), styled to match `.raw__download`. */
+.dlmenu {
+  position: relative;
+}
+.dlmenu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.dlmenu > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A popover trigger while its own panel is open, which nothing said before: the panel appeared and
+   the button it came out of went on looking untouched, so with two of them side by side (Overview's
+   attach-protocol and attach-plate) nothing tied the open list to the button that opened it.
+   Cyan-on-solid is the app's existing "this one is active" idiom (`.filechip.is-active`,
+   `.segmented__item.is-active`), and it has to out-state *hover* rather than match it, since the
+   pointer is usually still on the trigger it just clicked — so where hover tints, open commits: a
+   solid border in place of the dashed one, and the accent moved into the text too.
+
+   Written against `[open]` rather than a class because the `<details>` element is the state — there
+   is nothing for React to keep in sync, and the two flavours of trigger (`.dropzone` for the attach
+   menus, `.raw__download` for the plate download) each need their own base to build on. */
+.dlmenu[open] > summary.dropzone {
+  border-style: solid;
+  border-color: var(--neon-cyan);
+  background: var(--neon-cyan-dim);
+  color: var(--neon-cyan);
+  box-shadow: 0 0 0 1px var(--neon-cyan-dim), 0 0 18px var(--neon-cyan-dim);
+}
+.dlmenu[open] > summary.raw__download {
+  border-color: var(--neon-cyan);
+  background: var(--raised);
+  color: var(--neon-cyan);
+  box-shadow: 0 0 0 1px var(--neon-cyan-dim);
+}
+.dlmenu__list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  max-width: 280px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+/* The right edge is the anchor by default because every menu that came first hangs off a
+   right-aligned toolbar (the Plates view's), where a list growing leftward is the one that stays on
+   screen. In Overview's experiment-parts cards the button is at the *left* of its card, so the same
+   rule ran the list off the left of the viewport — anchor it under the button's left edge there and
+   let it grow the way it has room to.
+
+   Scoped to the context rather than offered as a prop each caller has to remember: which edge is
+   safe follows from where the button sits, which the caller does not choose either. (This is the
+   job CSS anchor positioning's `position-area` + `position-try-fallbacks` does declaratively, and
+   it is what to switch to once it needs no polyfill — the polyfill is a CDN import, which this app
+   cannot make.) */
+.overview__part .dlmenu__list {
+  right: auto;
+  left: 0;
+}
+/* AttachPlateMenu's list, not PlateDownloadButton's: its rows are file names (a run's own or a
+   sample's export can run long), where the default width just wraps them across several lines. */
+.dlmenu__list--wide {
+  min-width: 320px;
+  max-width: min(560px, 90vw);
+}
+.dlmenu__item {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dlmenu__item:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--ink);
+}
+.dlmenu__item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* Where an offered plate/protocol lives, under its own name — the run it is embedded in, for the
+   items that aren't a file of their own. Its own line rather than a suffix, so a long run filename
+   truncates without eating the name that identifies the thing being picked. */
+.dlmenu__from {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The "replace this plate?" prompt `AttachPlateMenu` swaps the file list for — the message
+   itself, plus its destructive confirm action, coloured like the file table's armed delete
+   button (`.ftbl__del.is-armed`) so a plate-discarding action reads the same as any other. */
+.dlmenu__confirm {
+  padding: 8px 12px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  white-space: normal;
+  border-bottom: 1px solid var(--border);
+}
+.dlmenu__item--danger {
+  color: var(--danger);
+}
+.dlmenu__item--danger:hover {
+  background: var(--danger);
+  color: var(--ink);
+}
+
+/* PlateViewer: header block above the grid, full width. There is no side panel — a well's extra
+ * fields live in its hover card (see `PlateViewer`), which spares the layout a second column
+ * that narrow containers could only stack. */
+.plateviewer {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+  font-size: 12px;
+}
+/* The plate's title line shares a row with the view's attach/download controls (passed in as
+   `PlateViewer`'s `toolbar`) rather than sitting below them, so the buttons don't cost a band of
+   vertical space of their own. */
+.plateviewer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-bottom: 8px;
+}
+.plateviewer__head .decoded__h,
+.plateviewer__head .plateview__toolbar {
+  margin-bottom: 0;
+}
+
+/* Preview variant (the Instrument view's staged run): no metadata block, and wells shrunk to
+   colour-coded cells so a 96-well plate fits a column instead of scrolling out of it. A loaded
+   well still shows one dot per fluor it carries (`.plate__welldots`), and the per-cell hover card
+   still carries everything, so this hides detail rather than losing it. */
+.plateviewer--compact {
+  gap: 12px;
+}
+/* Square cells, every column the same width. The full-size grid sizes its columns to their
+   contents, which here let a two-digit column header ("10"–"12") widen its own column by the 8px
+   of header padding — enough extra room that a well's dots wrapped differently in the last three
+   columns than in the first nine. `table-layout: fixed` takes every column's width from the
+   header row and ignores cell content, so the wells stay square and the dots wrap identically
+   across the plate; the header gives up its horizontal padding to fit "12" in that width. */
+.plateviewer--compact .plate__grid {
+  table-layout: fixed;
+}
+.plateviewer--compact .plate__grid th {
+  width: 24px;
+  padding: 3px 0;
+}
+.plateviewer--compact .plate__grid td.plate__well {
+  min-width: 0;
+  width: 24px;
+  height: 24px;
+  padding: 1px 2px;
+}
+.plateviewer--compact .plate__wellsample,
+.plateviewer--compact .plate__welltargets {
+  display: none;
+}
+.plateviewer--compact .decoded__h {
+  margin-bottom: 4px;
+}
+
+/* ---- Plate editor -------------------------------------------------------
+ * The grid plus, while editing, a details panel for the selected wells (`PlateEditor`). A flex
+ * row rather than a grid for the same reason `.plateview` is one: the second column exists only
+ * in edit mode, and a fixed track would leave a gap the rest of the time.
+ *
+ * The panel is `sticky` inside `.plateview__main`, which is the element that scrolls: a 96-well
+ * grid is taller than the viewport, and a panel that scrolled away would leave the fields out of
+ * reach exactly when a selection at the bottom of the plate needs them. */
+.plateedit {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-width: 0;
+}
+.plateedit__grid {
+  flex: 1;
+  min-width: 0;
+}
+.plateedit__panel {
+  flex: 0 0 clamp(240px, 26cqi, 300px);
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  font-size: 12px;
+}
+.plateedit__panelhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.plateedit__panelhead .decoded__h {
+  margin-bottom: 0;
+}
+.plateedit__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.plateedit__label {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+.plateedit__input {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--plane);
+  color: var(--ink);
+  font-size: 12px;
+}
+.plateedit__input:focus {
+  outline: none;
+  border-color: var(--neon-cyan);
+}
+.plateedit__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.plateedit__sectionhead {
+  color: var(--ink-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+/* Dye name (with its in-the-well checkbox) then that dye's target, on one line: the pair is one
+   fact — what this well measures in this channel — and stacking them doubled the panel's height
+   for a five-dye plate. */
+.plateedit__fluorrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.plateedit__fluorname {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plateedit__addrow {
+  display: flex;
+  gap: 6px;
+}
+.plateedit__chipx {
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.plateedit__chipx:hover {
+  color: var(--danger);
+  background: transparent;
+}
+
+/* Editing turns the grid into a selection surface: headers become click targets, and a selected
+   well is outlined rather than filled, so the sample-type tint underneath still reads. */
+.plateviewer--selectable .plate__grid th.plate__head {
+  cursor: pointer;
+  user-select: none;
+}
+.plateviewer--selectable .plate__grid th.plate__head:hover {
+  color: var(--ink);
+  background: var(--raised-2);
+}
+.plateviewer--selectable .plate__well {
+  cursor: cell;
+  user-select: none;
+}
+.plateviewer--selectable .plate__grid td.plate__well.is-selected {
+  outline-color: var(--neon-cyan);
+  /* Above its neighbours, so the outline of a selected block isn't clipped by the next cell's
+     own border on the shared edge. */
+  position: relative;
+  z-index: 1;
+}
+
+@container appmain (inline-size < 760px) {
+  /* Too narrow for two columns: the panel goes under the grid and stops sticking (there is
+     nothing beside it to stay level with). */
+  .plateedit {
+    flex-direction: column;
+  }
+  .plateedit__panel {
+    position: static;
+    flex: 1 1 auto;
+    align-self: stretch;
+  }
+}
+
+/* ---- Decoded view ------------------------------------------------------- */
+.raw__decoded {
+  flex: 1;
+  overflow: auto;
+  padding: 14px 16px;
+}
+.decoded {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  font-size: 12px;
+}
+.decoded__na {
+  color: var(--ink-muted);
+  padding: 20px;
+}
+.decoded__h {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--neon-cyan);
+  margin: 0 0 8px;
+}
+.decoded__dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 18px;
+  margin: 0;
+}
+.decoded__pair {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+.decoded__pair dt {
+  color: var(--ink-muted);
+  flex: 0 0 88px;
+}
+.decoded__pair dd {
+  margin: 0;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+/* Tables (dark, kv, grid) */
+.decoded__tbl {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.decoded__tbl th,
+.decoded__tbl td {
+  text-align: right;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.decoded__tbl thead th {
+  color: var(--ink-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.decoded__tbl td:first-child,
+.decoded__tbl th:first-child {
+  text-align: left;
+}
+.decoded__swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: baseline;
+}
+.decoded__hint {
+  margin: 0 0 8px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  max-width: 90ch;
+}
+.decoded__fields td:first-child,
+.decoded__fname {
+  color: var(--neon-cyan);
+}
+.decoded__ftext {
+  display: inline-block;
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+/* Only the values long enough to be truncated are hoverable — see `raw/LongValue.tsx`. */
+.decoded__ftext--long {
+  cursor: help;
+  text-decoration: underline dotted var(--ink-muted);
+  text-underline-offset: 3px;
+}
+.decoded__ftext--long:focus-visible {
+  outline: 1px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
+/* The full, line-wrapped value behind a truncated cell. */
+.valuecard {
+  pointer-events: none;
+  max-width: min(72ch, calc(100vw - 32px));
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: rgba(10, 14, 22, 0.96);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.5;
+  /* The whole point of the card: wrap rather than truncate, and break a long unbroken token
+     (a hex blob, a serial list with no spaces) rather than overflow the box. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* WELLDATA grid */
+.decoded__controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.decoded__ctxt {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+.decoded__gridwrap {
+  overflow-x: auto;
+}
+.decoded__grid {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.decoded__grid th {
+  color: var(--ink-muted);
+  padding: 3px 8px;
+  font-weight: 600;
+}
+.decoded__grid td {
+  text-align: right;
+  padding: 2px 8px;
+  color: var(--ink-2);
+  border-bottom: 1px solid rgba(120, 200, 255, 0.04);
+}
+.decoded__grid tbody th {
+  text-align: left;
+}
+.decoded__refrow th,
+.decoded__refrow td {
+  color: var(--neon-magenta);
+  border-top: 1px solid var(--border);
+}
+
+/* KV table (RunInfo) */
+.decoded__kv {
+  width: 100%;
+  table-layout: fixed;
+}
+.decoded__kv .decoded__k {
+  width: 34%;
+  color: var(--ink-2);
+  vertical-align: top;
+}
+.decoded__kv .decoded__v {
+  text-align: left;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.decoded__empty {
+  color: var(--ink-muted);
+}
+/* Something the reader should not skim past: a set error flag in a `.alf` run report, or a line
+   the decoder couldn't make sense of. `--danger`, not a neon accent — this is a state, not
+   chrome. A clear flag stays muted, so the line reads as quiet-unless-it-isn't. */
+.decoded__alarm {
+  color: var(--danger);
+}
+
+/* The `.alf` execution log (alf.md §7). The directive column is prose-ish and left-aligned like
+   the first column; everything else is a number and stays right-aligned by `.decoded__tbl`. */
+.decoded__alf td:nth-child(4) {
+  text-align: left;
+}
+/* The log is one row per step execution — 136 for a 45-cycle run, thousands for a long one — so
+   the column headings have to stay put as it scrolls, or "0:13" in the sixth column stops
+   meaning anything. Sticks to `.raw__decoded`, the scrolling ancestor. */
+.decoded__alf thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--plane);
+}
+/* A stage boundary — where the repeat count went backwards (alf.md §7.2), the only marker the
+   file has for one. A rule above the row, not a colour on it: the rows themselves are all the
+   same kind of thing. */
+.decoded__alfstage td {
+  border-top: 1px solid var(--neon-cyan-dim);
+}
+.decoded__alfend td {
+  color: var(--ink-muted);
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+
+/* Protocol steps: thermal steps numbered 1-based (GOTO targets), setup lines unnumbered. */
+/* A protocol listing: the directives as written, each with the library's reading of it beside
+   it (protocol.md). The gloss sits to the right when there is room and drops under its own
+   directive when there isn't — the Instrument view's staged protocol is a half-width column,
+   where two columns would leave the notes wrapping one word per line. Container query, not a media
+   query: what matters is the panel's width, not the window's. */
+.decoded__proto {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--ink);
+  container-type: inline-size;
+}
+.decoded__protoline {
+  display: grid;
+  grid-template-columns: 2.2em 1fr;
+  gap: 2px 12px;
+  align-items: baseline;
+  border-radius: var(--radius-sm);
+}
+/* The line the instrument reports it's executing right now (`InstrumentRun`'s `activeStepNumber`,
+   from `CfxStatus.step`). Same cyan accent as `.segmented__item.is-active`, but padded and boxed
+   rather than just tinted text — this list has no other affordance for "selected", so the line
+   needs to read as picked-out at a glance, not just a slightly different color. */
+.decoded__protoline.is-active {
+  background: var(--neon-cyan-dim);
+  box-shadow: inset 2px 0 0 var(--neon-cyan);
+  padding: 2px 6px;
+  margin: 0 -6px;
+}
+.decoded__protonum {
+  text-align: right;
+  color: var(--neon-cyan);
+  font-variant-numeric: tabular-nums;
+}
+/* The library's reading of the directive, not the directive itself — a different face and a
+   quieter colour, so the program stays the thing you read and the gloss stays a gloss. */
+.decoded__protonote {
+  grid-column: 2;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+/* The scan mask's two fields, under the PLATEREAD that packs them into one hex byte — kept even
+   in the unannotated listing (see `ProtocolDecoded`), so it stays under the directive text rather
+   than moving to the reading column the way a note does. */
+.decoded__protoscan {
+  grid-column: 2;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+@container (min-width: 560px) {
+  .decoded__protoline {
+    grid-template-columns: 2.2em minmax(14em, max-content) 1fr;
+  }
+  .decoded__protonote {
+    grid-column: 3;
+  }
+}
+
+/* Pretty XML */
+.decoded__xml {
+  margin: 0;
+  white-space: pre;
+  line-height: 1.5;
+  font-size: 12px;
+  overflow-x: auto;
+}
+.xml-tag {
+  color: var(--neon-cyan);
+}
+.xml-attr {
+  color: #d8a657;
+}
+.xml-val {
+  color: #a9d977;
+}
+.xml-text {
+  color: var(--ink);
+}
+.xml-punct {
+  color: var(--ink-muted);
+}
+/* Collapsible XML tree nodes (lib/xmlTree.tsx) */
+.decoded__xml details {
+  margin: 0;
+}
+.decoded__xml summary {
+  cursor: pointer;
+  list-style-position: outside;
+}
+.decoded__xml summary::marker {
+  color: var(--ink-muted);
+}
+.decoded__xml summary:hover {
+  background: var(--raised);
+}
+.xml-count {
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+/* ---- Runlog table ------------------------------------------------------- */
+.runlog {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.runlog__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+}
+.runlog__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.runlog__grouplabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+}
+.runlog__chip {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  background: transparent;
+}
+.runlog__chip.is-on {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--neon-cyan) 55%, transparent);
+  background: var(--neon-cyan-dim);
+}
+.runlog__count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.runlog__tblwrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.runlog__tbl {
+  /* No width:100% — columns size to content so TS stays narrow and long Msg values make
+     the wrapper scroll horizontally instead of stretching every column. */
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.runlog__tbl thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 6px 10px;
+  background: var(--raised);
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.runlog__tbl td {
+  padding: 4px 10px;
+  border-bottom: 1px solid rgba(120, 200, 255, 0.05);
+  color: var(--ink-2);
+  vertical-align: top;
+  white-space: nowrap;
+}
+.runlog__row {
+  cursor: default;
+}
+.runlog__row:hover {
+  background: var(--raised);
+}
+.runlog__ts {
+  white-space: nowrap;
+}
+/* Severity accents (left edge on the first cell). */
+.runlog__row td:first-child {
+  border-left: 2px solid transparent;
+}
+.sev-warning td:first-child {
+  border-left-color: var(--good);
+  border-left-color: #eab308;
+}
+.sev-error td:first-child,
+.sev-critical td:first-child,
+.sev-fatal td:first-child {
+  border-left-color: var(--danger);
+}
+.sev-error td,
+.sev-critical td,
+.sev-fatal td {
+  color: #ffb3b3;
+}
+
+.runlog__tip {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  max-width: min(560px, 90vw);
+  max-height: 80vh;
+  overflow: hidden;
+  padding: 10px 12px;
+  background: rgba(10, 14, 22, 0.96);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  /* Wrap long values (e.g. the Msg field) instead of clipping them horizontally, while
+     keeping the XML indentation. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* USB traffic log (usb-traffic.bin) decoded view — reuses the run log's controls and table,
+   adding rows that open into a byte-by-byte explanation. */
+.usblog {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 12px;
+}
+.usblog__wide {
+  grid-column: span 2;
+}
+.usblog__wide dt {
+  flex-basis: auto;
+}
+.usblog__error {
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+.usblog__filter {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  min-width: 200px;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.usblog__tblwrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.usblog__tbl {
+  width: 100%;
+}
+.usblog__row {
+  cursor: pointer;
+}
+.usblog__row:hover,
+.usblog__row.is-open {
+  background: var(--raised);
+}
+.usblog__row td:first-child {
+  border-left: 2px solid transparent;
+}
+.usblog__row.is-in td {
+  color: var(--ink);
+}
+.usblog__row.is-poll td {
+  color: var(--ink-muted);
+}
+.usblog__row.is-meta td {
+  color: var(--neon-cyan);
+}
+.usblog__row.is-unsolicited td:first-child {
+  border-left-color: var(--warn);
+}
+.usblog__row.is-error td {
+  color: var(--danger);
+}
+.usblog__row.is-error td:first-child {
+  border-left-color: var(--danger);
+}
+.usblog__toggle {
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  padding: 0 6px 0 0;
+  font: inherit;
+  cursor: pointer;
+}
+.usblog__off {
+  color: var(--ink-muted);
+}
+.usblog__dir {
+  text-align: center;
+}
+.usblog__num {
+  text-align: right !important;
+}
+.usblog__msg {
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  min-width: 40ch;
+}
+.usblog__detailrow > td {
+  padding: 4px 10px 16px 24px !important;
+  background: var(--panel);
+  white-space: normal !important;
+}
+.usblog__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  cursor: auto;
+}
+.usblog__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.usblog__fields td {
+  text-align: left;
+  vertical-align: top;
+}
+.usblog__fields th {
+  text-align: left !important;
+}
+.usblog__hex,
+.usblog__raw {
+  color: var(--ink-2);
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere;
+  max-width: 48ch;
+}
+.usblog__note {
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+  min-width: 30ch;
+  max-width: 90ch;
+}
+.usblog__dump {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+}
+
+/* Plate setup (.pltd) decoded view */
+.plate__fluors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 10px;
+}
+.plate__fluors--inline {
+  margin-top: 0;
+  gap: 4px 6px;
+}
+.plate__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  font-size: 11px;
+}
+.plate__chipch {
+  color: var(--ink-muted);
+}
+.plate__grid {
+  table-layout: auto;
+  /* Separate borders, unlike every other `.decoded__grid`: a loaded well tints its own border
+     (see `WellCell`), and under `border-collapse: collapse` two neighbours share one border, with
+     a colour-only conflict resolved in favour of the cell further left/up. A loaded well's tinted
+     left edge therefore lost to its plain neighbour's right edge while its own right edge won —
+     the highlight came out with three sides. Owning all four borders is what makes the tint
+     symmetric (and is also what makes the wells' `border-radius` apply at all). */
+  border-collapse: separate;
+  border-spacing: 0;
+  /* One text line inside a well. Both the sample name and each target line are pinned to it so
+     the reserved cell height below is exact rather than an estimate of the font's metrics. */
+  --plate-well-line: 12px;
+}
+/* Each cell carries the sample name + per-channel target text (colored by dye), so the
+   columns size to their content rather than to a fixed well-sized box.
+
+   The height is reserved from `--plate-fluor-rows` (set by `PlateViewer` to the plate's channel
+   count — dyes sharing a channel share a line): one line for the sample name plus one per
+   channel, plus padding and the 2px gap above the target list. Applied to every cell — including empty ones — so all rows
+   come out identical instead of each row sizing to its own tallest well. */
+.plate__grid td.plate__well {
+  min-width: 84px;
+  height: calc(8px + (var(--plate-fluor-rows, 1) + 1) * var(--plate-well-line));
+  padding: 3px 5px;
+  text-align: left;
+  vertical-align: top;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: outline-color 0.1s;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+.plate__grid td.plate__well.is-empty {
+  background: var(--plane);
+}
+/* Cells are not clickable — the hover outline is a reading aid, pairing with the cell's hover
+   card (`.curvecard`, shared with the Curves view) to say which well the card is describing. */
+.plate__well:hover:not(.is-empty) {
+  outline-color: var(--border-strong);
+}
+.plate__wellsample {
+  display: block;
+  font-size: 10px;
+  line-height: var(--plate-well-line);
+  min-height: var(--plate-well-line);
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plate__welltargets {
+  display: flex;
+  flex-direction: column;
+  margin-top: 2px;
+}
+.plate__target {
+  font-size: 9px;
+  line-height: var(--plate-well-line);
+  /* A channel this well carries nothing on renders as an empty span; it still has to hold its
+     line so the channels below it stay on their own. */
+  min-height: var(--plate-well-line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Channel-coloured dots, one per fluor the well carries. Hidden in the full-size grid, where the
+   per-fluor target text above already names and colours them; the compact variant, which hides
+   that text, turns them on (see `.plateviewer--compact`). */
+.plate__welldots {
+  display: none;
+}
+.plateviewer--compact .plate__welldots {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  justify-content: center;
+  gap: 2px;
+  height: 100%;
+}
+/* 4px dots with a 2px gap put three across the 18px of content a square 24px compact cell has,
+   so a 4-dye well wraps to a second row rather than overflowing and a 6-dye one comes out an even
+   3+3. The cell is square by construction (see `.plateviewer--compact .plate__grid`), so this
+   wrapping is the same in every column. */
+.plate__welldot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+.plate__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.plate__legitem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.plate__legdot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.plate__pwform {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.plate__pwinput {
+  flex: 0 1 320px;
+  padding: 6px 10px;
+  background: var(--plane);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-size: 12px;
+}
+.plate__pwinput:focus {
+  outline: none;
+  border-color: var(--neon-cyan);
+}
+
+/* ---- Curves view: table mode --------------------------------------------- */
+/* The Cq/ΔRFU table that replaces the chart in the "Table" view mode, plus the rail's threshold
+   overrides and CSV button. Sits inside .curves, so it reuses that two-column grid (rail +
+   content) unchanged — only .curves__plot is swapped for .analysis__table-wrap. */
+.analysis__table-wrap {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  /* No padding-top: a `top: 0` sticky header pins to the scroll container's *content* box, so
+     any top padding leaves an uncovered strip that scrolled-away rows show through. The header's
+     own cell padding provides the spacing instead. */
+  padding: 0 10px 10px;
+}
+/* Landscape-phone drawer (see the `.curves`/`.curves__rail` media query above): Table mode fills
+   the same viewport-height box the chart does once the rail is an overlay rather than a column.
+   Placed after the base rule above so it wins the `padding` tie at equal specificity. */
+@media (orientation: landscape) and (max-height: 560px) {
+  .analysis__table-wrap {
+    height: 100%;
+    padding: 6px;
+  }
+}
+.analysis__tbl {
+  width: 100%;
+}
+/* Restores the breathing room lost with the wrapper's padding-top — on the header cells, which
+   scroll-pin, so it stays part of the opaque band that covers the rows underneath. */
+.analysis__tbl thead th {
+  padding-top: 10px;
+}
+/* A row whose well has no Cq. Named for what it is: the greying tracks the missing Cq, not an
+   "amplified" verdict — a well can rise clearly and still never cross its threshold. */
+.analysis__row.is-nocq {
+  opacity: 0.45;
+}
+.analysis__row.is-nocq:hover {
+  opacity: 0.7;
+}
+
+/* Sortable headers. The whole cell is the button (padding lives on it, not the th) so the click
+   target is the header, not just its five characters of label. */
+.atbl thead th {
+  padding: 0;
+}
+.atbl__sort {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 10px 10px 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.atbl__num .atbl__sort {
+  /* Numeric columns are right-aligned, so their header reads from the right edge too — label
+     first, arrow outboard of it, mirroring the text columns. */
+  flex-direction: row-reverse;
+}
+.atbl__sort:hover {
+  color: var(--ink);
+  background: var(--raised-2);
+}
+.atbl__sort.is-sorted {
+  color: var(--neon-cyan);
+}
+/* The inactive ↕ is nearly invisible until the header is hovered or focused — it holds the
+   arrow's width so nothing shifts when the sort moves, without eight arrows shouting at once. */
+.atbl__arrow {
+  font-size: 9px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.atbl__sort:hover .atbl__arrow,
+.atbl__sort:focus-visible .atbl__arrow {
+  opacity: 0.5;
+}
+.atbl__arrow.is-on {
+  opacity: 1;
+  color: var(--neon-cyan);
+}
+.atbl__num {
+  text-align: right;
+}
+
+/* Each row is washed with its well's sample-type colour (`--rowc`, from `SAMPLE_TYPE_META` —
+   the same hue the plate map paints that well), so a control reads as a control without
+   reaching for its label. Kept very dilute: eight columns of text sit on top of it. */
+.atbl tbody tr {
+  background: color-mix(in srgb, var(--rowc) 7%, transparent);
+}
+.atbl tbody tr:hover {
+  background: color-mix(in srgb, var(--rowc) 16%, transparent);
+}
+/* The well label carries the same colour as a solid left edge — the wash alone is too faint to
+   pick a type out of a scrolling table. */
+.atbl__well {
+  display: inline-block;
+  padding: 1px 6px 1px 5px;
+  border-left: 3px solid var(--rowc);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--rowc) 14%, transparent);
+  color: var(--ink);
+  font-size: 11px;
+}
+.atbl__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 12%, transparent);
+  color: color-mix(in srgb, var(--c) 78%, var(--ink));
+  font-size: 11px;
+  white-space: nowrap;
+}
+.atbl__swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
+}
+.atbl__none {
+  color: var(--ink-muted);
+}
+/* Well, Sample and Target are pickers as much as values — clicking one leaves the table for the
+   Target view charting just that well/sample/target. The button carries no chrome of its own:
+   the value keeps its existing chip, and the affordance is the pointer cursor plus a brightening
+   on hover, so three clickable columns don't turn the table into a wall of buttons. */
+.atbl__pick {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.atbl__pick:hover {
+  color: var(--ink);
+}
+/* In the right-aligned result columns the button is the cell's whole content, so it has to carry
+   the alignment itself — an inline-flex box would otherwise sit left of the numbers above it. */
+.atbl__num .atbl__pick {
+  justify-content: flex-end;
+  width: 100%;
+}
+.atbl__pick:hover .atbl__well,
+.atbl__pick:hover .atbl__chip {
+  background: color-mix(in srgb, var(--c, var(--rowc)) 26%, transparent);
+  color: var(--ink);
+}
+.atbl__pick:focus-visible {
+  outline: 1px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+.atbl__baseline {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+/* The headline number of the table: brighter and heavier than the columns explaining it. Its
+   exact brightness is set inline, from the cycle it crossed at (see `CqCell`). */
+.atbl__cqcell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.atbl__cq {
+  min-width: 34px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.atbl__cq.is-none {
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+/* Cycle 1 → the last cycle read, with the crossing marked on it. Same domain as the chart's x
+   axis, so a row's marker sits where its curve crosses the threshold line. */
+.atbl__cqaxis {
+  position: relative;
+  width: 72px;
+  height: 12px;
+  /* The axis line itself, drawn as a centred 1px rule so the marker has something to sit on
+     without a second element. */
+  background: linear-gradient(var(--border-strong), var(--border-strong)) center / 100% 1px
+    no-repeat;
+}
+.atbl__cqmark {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 1px;
+}
+/* ΔRFU: the number, plus a bar giving it a scale — every bar is a fraction of the largest
+   endpoint in the table, so amplitudes compare down the column at a glance. */
+.atbl__delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.atbl__deltanum {
+  min-width: 44px;
+  text-align: right;
+}
+.atbl__deltabar {
+  width: 56px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--raised-2);
+  overflow: hidden;
+}
+.atbl__deltafill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  opacity: 0.85;
+}
+.analysis__download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  padding: 5px 10px;
+  font-size: 11px;
+}
+/* ---- Auto-threshold multiplier slider ----------------------------------- */
+.threshold-k {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 10px;
+}
+/* Baseline section: a labelled select and a two-ended cycle window, both narrow enough for the
+   rail. The window's two inputs sit on one row with the reset beside them, so the pair reads as
+   one range rather than two settings. */
+.analysis__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.analysis__field > select,
+.analysis__field input[type="number"] {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-1);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+.baseline__window {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.baseline__window input[type="number"] {
+  width: 62px;
+  min-width: 0;
+  text-align: center;
+}
+.threshold-k__head,
+.threshold-k__foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.threshold-k__head {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.threshold-k__value {
+  font-size: 11px;
+  color: var(--neon-cyan);
+}
+.threshold-k__hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+.threshold-method {
+  min-width: 0;
+  max-width: 14em;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+}
+.threshold-k__foot .rail__link:disabled {
+  opacity: 0.3;
+}
+.threshold-k input[type="range"] {
+  width: 100%;
+  height: 13px;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.threshold-k input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--border-strong);
+  border-radius: 2px;
+}
+.threshold-k input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: var(--border-strong);
+  border-radius: 2px;
+}
+.threshold-k input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--neon-cyan);
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 4px var(--neon-cyan-dim);
+}
+.threshold-k input[type="range"]::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--neon-cyan);
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 4px var(--neon-cyan-dim);
+}
+.threshold-k input[type="range"]:focus-visible {
+  outline: 1px solid var(--neon-cyan);
+  outline-offset: 3px;
+}
+
+/* ---- Cq range filter (double-ended) -------------------------------------
+   Two native range inputs stacked on one drawn track: the inputs' own tracks are transparent and
+   ignore the pointer, so only the two thumbs are grabbable and a click between them doesn't
+   teleport a handle. Everything visible — track, filled span, thumbs — is styled to match the
+   auto-threshold slider above. */
+.cq-range {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cq-range__head,
+.cq-range__foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cq-range__head {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.cq-range__value {
+  font-size: 11px;
+  color: var(--neon-cyan);
+}
+.cq-range__hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+.cq-range__foot .rail__link:disabled {
+  opacity: 0.3;
+}
+.cq-range__slider {
+  position: relative;
+  height: 13px;
+}
+.cq-range__track,
+.cq-range__fill {
+  position: absolute;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+.cq-range__track {
+  left: 0;
+  right: 0;
+  background: var(--border-strong);
+}
+.cq-range__fill {
+  background: var(--neon-cyan-dim);
+}
+.cq-range__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 13px;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  pointer-events: none;
+}
+.cq-range__input--lo {
+  z-index: 2;
+}
+.cq-range__input--hi {
+  z-index: 3;
+}
+/* Coincident thumbs — the lower handle is the one with room to move, so it takes the pointer. */
+.cq-range__slider.is-lo-top .cq-range__input--lo {
+  z-index: 4;
+}
+.cq-range__input::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+.cq-range__input::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+.cq-range__input::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--neon-cyan);
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 4px var(--neon-cyan-dim);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.cq-range__input::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--neon-cyan);
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 4px var(--neon-cyan-dim);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.cq-range__input:focus-visible {
+  outline: 1px solid var(--neon-cyan);
+  outline-offset: 3px;
+}
+
+.analysis__thresholds {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.analysis__threshold-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.analysis__threshold-row:hover {
+  background: var(--raised);
+}
+.analysis__threshold-row input {
+  width: 72px;
+  margin-left: auto;
+  padding: 3px 6px;
+  background: var(--plane);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-size: 11px;
+  text-align: right;
+}
+.analysis__threshold-row input:focus {
+  outline: none;
+  border-color: var(--neon-cyan);
+}
+/* No override set: the field is showing the live auto value, not a value the user chose. */
+.analysis__threshold-row input.is-auto {
+  color: var(--ink-muted);
+}
+/* An override *is* set. Tinted rather than merely brighter, so a manual threshold is visible as
+   manual at a glance — including on the collapsed fluorophore row, where the alternative was
+   noticing that one number stopped tracking the multiplier slider. */
+.analysis__threshold-row input.is-override {
+  background: var(--good-dim);
+  border-color: rgba(61, 220, 132, 0.45);
+  color: var(--ink);
+}
+.analysis__threshold-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Expander for a fluorophore's own curves. A plain button so the rest of the row stays hoverable
+   as one unit (hovering the row marks the threshold on the chart), unlike the <details>/<summary>
+   the rail's collapsible sections use. */
+.analysis__threshold-chevron {
+  flex: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  line-height: 1;
+}
+.analysis__threshold-chevron:disabled {
+  opacity: 0.25;
+}
+.analysis__threshold-chevron .rail__chevron {
+  margin-right: 0;
+}
+.analysis__threshold-chevron .rail__chevron.is-open {
+  transform: rotate(90deg);
+}
+/* One curve under its fluorophore: indented, dimmer, and carrying the two numbers the threshold
+   is actually made of (baseline region and noise) before its own override field. */
+.analysis__threshold-row--curve {
+  gap: 6px;
+  margin-left: 14px;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+.analysis__threshold-row--curve input {
+  width: 60px;
+  font-size: 10px;
+  padding: 2px 5px;
+}
+/* The row a Cq marker is currently being dragged against (see `ThresholdSection`'s `revealCurve`).
+   Same treatment as hovering the row, since it is the same relationship — this row and that curve —
+   just driven from the chart instead of from the rail, plus an edge marker so it stays findable
+   once the pointer is somewhere else entirely. */
+.analysis__threshold-row--curve.is-revealed {
+  background: var(--raised);
+  box-shadow: inset 2px 0 0 var(--neon-cyan);
+}
+/* A Cq drag runs over the whole document (the pointer leaves the plot freely), so the resize
+   cursor has to be set there too, not just on the marker it started from. */
+body.is-cqdrag,
+body.is-cqdrag * {
+  cursor: ns-resize !important;
+  user-select: none;
+}
+
+.analysis__threshold-well {
+  flex: none;
+  color: var(--ink-2);
+}
+.analysis__threshold-region,
+.analysis__threshold-noise {
+  flex: none;
+  white-space: nowrap;
+}
+.analysis__threshold-row .rail__link {
+  flex: none;
+}
+.analysis__threshold-row .rail__link:disabled {
+  opacity: 0.25;
+}
+
+/* ---- Instrument view ---------------------------------------------------------
+   A live instrument over WebUSB, and not a lens on any file — which is why its tab has a group of
+   its own at the end of the strip rather than sitting among the file views. The view uses magenta
+   where the rest of the chrome uses cyan — the palette's second accent, already meaning "this is a
+   different kind of thing" on the rail's switches — and the tab now carries that same magenta, so
+   the strip says which surface it opens. Layout is the Curves view's rail + content grid
+   (`.curves`), so the surfaces read the same even though the content doesn't. */
+
+/* The view bar is three groups rather than one control: Files, the file views, then Instrument.
+   The gaps plus the separate borders are the whole visual argument that the file selection applies
+   to the middle one only — see `ViewBar.tsx`. */
+.viewbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+/* The "More" group: the file views that are consulted rather than worked in, folded into one
+   button so the strip leads with the two panels that answer "how much, and was it the right
+   product". The menu is a popover rather than extra tabs in the strip: adding seven more tabs
+   back would undo the point of hiding them, and a wrapping second row would move the whole
+   header every time it opened. */
+.viewbar__more {
+  position: relative;
+}
+.viewbar__pop {
+  /* Positioned from the button's own rectangle in JS (`ViewBar.tsx`), because the strip clips
+     whatever sits below it; these are the fallbacks before the first measurement. */
+  position: fixed;
+  top: 64px;
+  right: 16px;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 18px 40px rgb(0 0 0 / 45%);
+}
+.viewbar__pop .segmented__item {
+  justify-content: flex-start;
+}
+/* The build stamp sits under the menu's grid, spanning both columns: a quiet line telling you
+   which build this window is running (an already-open window keeps the old one). */
+.viewbar__stamp {
+  grid-column: 1 / -1;
+  padding: 6px 10px 2px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-dim);
+  font: 11px ui-monospace, monospace;
+}
+/* Catches the click that dismisses the menu; behind it, above everything else, so a click that
+   lands on a curve or a tab closes the menu instead of doing two things at once. */
+.viewbar__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+/* At the tightest collapse level the groups' own gaps and borders are pure overhead next
+   to icon-only tabs — tightening it here (rather than for `.viewbar` generally) buys back the
+   few pixels an extra tab costs without touching any tab's own padding, so tap targets stay the
+   same size at every level. */
+.app__header[data-fit="3"] .viewbar {
+  gap: 4px;
+}
+/* Files (`FilesTableView.tsx`): the catalog rather than a lens on the selected file, and green
+   (`--good`) rather than the chrome's cyan, so its group reads as a different kind of tab. */
+.segmented--files {
+  border-color: var(--good-dim);
+}
+.segmented--files .segmented__item.is-active {
+  background: var(--good-dim);
+  box-shadow: inset 0 -2px 0 var(--good);
+}
+
+/* Instrument (`InstrumentView.tsx`): the machine on the other end of the cable rather than a lens
+   on the selected file, so it gets a group of its own at the far end of the strip — and magenta
+   (`--neon-magenta`), the accent that already means "instrument" on the view's own rail. The two
+   bracketing groups are the two tabs that were never about the selection. */
+.segmented--instrument {
+  border-color: var(--neon-magenta-dim);
+}
+.segmented--instrument .segmented__item.is-active {
+  background: var(--neon-magenta-dim);
+  box-shadow: inset 0 -2px 0 var(--neon-magenta);
+}
+
+/* Files exist but none is selected — every one released, or a `#file=` this browser can't
+   resolve. The chrome is unchanged (that is the point: the way out is to pick a file), so this is
+   only the placeholder where a view would be. */
+.app__noselection {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  padding: 40px 20px;
+  color: var(--dim);
+  text-align: center;
+}
+.app__noselection strong {
+  color: var(--fg);
+}
+
+/* A page with the header but no file bar (`app--nofiles`) still has to fill the viewport, so it
+   gets the same two-row grid `.app` uses minus the file-bar row. */
+.app--nofiles {
+  display: grid;
+  grid-template-rows: var(--header-h) 1fr;
+  height: 100%;
+  min-height: 0;
+}
+.app__welcomeinstrument {
+  display: flex;
+  justify-content: center;
+  padding-bottom: 24px;
+}
+
+.instrument__rail {
+  border-right-color: var(--neon-magenta-dim);
+}
+/* Protocol staging (content-sized — it bounds its own scrolling parts), then the file browser
+   taking the slack, then the console. A flex column rather than a fixed-row grid because the
+   lower two panels collapse: a closed <details> must shrink to its header, which no
+   `grid-template-rows` track can express — the open/closed rules live on the panels below. */
+.instrument__content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Buttons: the base `button` element rule already carries the look; these only add the compact
+   size and a block-level variant the rail's stacked actions need. */
+.btn--sm {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+/* A disabled action has to *look* unavailable, not merely refuse the click — the protocol
+   panel's "Upload protocol" and "Start run" are permanently inert until the library grows the
+   commands behind them, and a button that looks live and does nothing reads as a bug. `!important`
+   beats `.btn--primary`'s own background, which would otherwise keep "Start run" looking armed. */
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: var(--border) !important;
+  background: transparent !important;
+}
+.btn:disabled:hover {
+  border-color: var(--border) !important;
+  background: transparent !important;
+}
+/* Looks disabled, but still takes the click — a button whose only blocker is a field the user
+   has to fill in, where the click's job is to go put the cursor there (`InstrumentRail`'s
+   `promptForName`). So it dims exactly like `:disabled` above, and keeps the pointer cursor,
+   which is the one honest difference: clicking it does something. */
+.btn.is-disabled {
+  opacity: 0.4;
+  border-color: var(--border) !important;
+  background: transparent !important;
+}
+.btn.is-disabled:hover {
+  border-color: var(--border-strong) !important;
+  background: transparent !important;
+}
+/* Start run stays functionally disabled the instant another USB command is in flight (only one
+   can be outstanding at a time), but a lid/indicator command round-trips fast enough that the
+   dimmed `:disabled` look above would otherwise flash on and off. `InstrumentRun` adds this
+   class only until busy has lasted long enough to be worth showing (`useBusyBriefly`), so it
+   wins over `:disabled` for that brief, purely-transient window. */
+.instrument__start--armed:disabled {
+  opacity: 1;
+  cursor: default;
+  border-color: var(--neon-magenta) !important;
+  background: var(--neon-magenta-dim) !important;
+}
+
+/* The one action in a group that does the thing you came for — "Open run" beside "Reload". It
+   borrows the Instrument view's magenta so it reads as this view's primary action. */
+.btn--primary {
+  border-color: var(--neon-magenta);
+  background: var(--neon-magenta-dim);
+}
+
+/* Connection */
+.instrument__connect {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.instrument__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+  flex: 0 0 auto;
+}
+/* The simulated-instrument notice. Warm rather than red: nothing is wrong, but nothing on this
+   rail is real either, and it has to read that way at a glance. */
+.instrument__mock {
+  margin-top: 8px;
+  border-left: 2px solid var(--neon-magenta);
+  padding-left: 8px;
+  color: var(--ink-2);
+}
+.instrument__speed {
+  margin-top: 10px;
+}
+.instrument__speed .segmented {
+  margin-top: 4px;
+  width: 100%;
+}
+.instrument__speed .segmented__item {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+.instrument__dot.is-on {
+  background: var(--good);
+  box-shadow: 0 0 8px var(--good);
+}
+/* Reconnecting: the link is down but the session is not over, so it pulses rather than sitting
+   at the dead grey of a deliberate disconnect. */
+.instrument__dot.is-warn {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn);
+  animation: instrument-dot-pulse 1.2s ease-in-out infinite;
+}
+@keyframes instrument-dot-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .instrument__dot.is-warn {
+    animation: none;
+  }
+}
+
+/* Status/identity rows */
+.devstat {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.devstat:last-of-type {
+  border-bottom: 0;
+}
+.devstat__label {
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.devstat__value {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.devstat__value--warn {
+  color: var(--warn);
+}
+.devstat__value--good {
+  color: var(--good);
+}
+/* The two headline clocks — elapsed and estimated time remaining. Bigger and side-by-side, ahead
+   of the plain temperature/step `.devstat` rows, since these are what an operator actually glances
+   at mid-run. */
+.instrument__timers {
+  display: flex;
+  gap: 8px;
+  margin: 6px 0 8px;
+}
+.instrument__timer {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2, transparent);
+}
+.instrument__timer__label {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+.instrument__timer__value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  color: var(--ink);
+}
+/* Which of STATUS?'s status-register bits are currently set (usb.md §3.2 field 7) — a compact
+   badge row rather than another label/value pair, since more than one can be true at once. This
+   row stays mounted even with no flags set, so its min-height (one badge's worth) holds the
+   space instead of letting the Actions section's buttons below shift as bits flip. */
+.instrument__flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 4px 0;
+}
+.instrument__flag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--neon-cyan-dim);
+  color: var(--neon-cyan);
+  background: var(--neon-cyan-dim);
+}
+.instrument__footnote {
+  color: var(--ink-muted);
+  margin-top: 8px;
+}
+.instrument__pollswitch {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+/* A boxed, dotted readout rather than a bare line of text: this appears for every USB command in
+   flight, including ones that resolve in well under a second (lid open/close), so it needs to
+   read at a glance as "the app is narrating a live device state" rather than as an error toast or
+   a rendering glitch. */
+.instrument__busybox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 5px 9px;
+  font-size: 12px;
+  color: var(--neon-cyan);
+  border: 1px solid var(--neon-cyan-dim);
+  border-radius: var(--radius-sm);
+  background: var(--neon-cyan-dim);
+}
+.instrument__busydot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--neon-cyan);
+  flex: 0 0 auto;
+  box-shadow: 0 0 6px var(--neon-cyan);
+  animation: instrument-busy-pulse 1s ease-in-out infinite;
+}
+@keyframes instrument-busy-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Stop and Pause, shown only while there is a run to act on (see `InstrumentRail`). They sit
+   above the generic action grid because they act on *this* run rather than on the instrument in
+   general, and Stop is tinted like a destructive action because it is one. */
+.instrument__runcontrols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.instrument__runcontrols .btn {
+  flex: 1 1 auto;
+  font-size: 12px;
+}
+.instrument__stop {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.instrument__stop:not(:disabled):hover {
+  background: rgba(255, 90, 90, 0.12);
+}
+/* Stop and Pause/Resume queue behind the same single-outstanding USB command channel Start does,
+   including behind each other and behind a lid/indicator action — and clicking Pause/Resume is
+   itself exactly the kind of fast round trip that would otherwise flash the `:disabled` look on
+   and off. Same fix as `.instrument__start--armed:disabled`: `InstrumentRail` adds these classes
+   only for that brief, purely-transient window, so the button keeps its normal look instead of
+   dimming and undimming within a beat. */
+.instrument__stop--armed:disabled {
+  opacity: 1;
+  cursor: default;
+  border-color: var(--danger) !important;
+  background: transparent !important;
+}
+.instrument__pause--armed:disabled {
+  opacity: 1;
+  cursor: default;
+  border-color: var(--border) !important;
+  background: transparent !important;
+}
+
+/* A rail button that has asked before doing something to a run in progress — stopping it, pausing
+   it, skipping its step, opening the lid on it (`InstrumentRail`'s `ActionButton`). Filled with
+   the danger colour, exactly like the file table's armed delete (`.ftbl__del.is-armed`), so "the
+   next click is the one that does it" looks the same wherever the app asks it.
+
+   Note the name: `--armed` a few rules above means something unrelated here (a button keeping its
+   enabled look through a brief busy window), so the confirm state is `is-confirming`. */
+.instrument__rail .btn.is-confirming,
+.instrument__rail .btn.is-confirming:hover {
+  border-color: var(--danger) !important;
+  background: var(--danger) !important;
+  color: #fff !important;
+}
+
+/* The run sitting on the instrument that this browser doesn't have. Boxed and tinted rather than
+   another `rail__note`, because unlike everything else in this section it is not a readout — it
+   is the one thing here the user is being asked to act on. */
+.instrument__offer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--neon-cyan);
+  border-radius: 4px;
+  background: var(--raised);
+}
+.instrument__offertext {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+.instrument__offername {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instrument__offerreads {
+  display: block;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+
+/* Actions. The `?` badge marks a command name this protocol was never observed using — the
+   button is real, but the instrument is expected to reject it, so it must not look as settled as
+   the ones beside it. */
+.instrument__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.instrument__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.instrument__action--unverified {
+  border-style: dashed;
+  color: var(--ink-2);
+}
+.instrument__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--warn);
+  color: #1a1200;
+  font-size: 10px;
+  font-weight: 700;
+}
+.instrument__result {
+  margin-top: 8px;
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.instrument__result.is-ok {
+  color: var(--good);
+  background: var(--good-dim);
+}
+.instrument__result.is-bad {
+  color: var(--warn);
+  background: rgba(255, 165, 61, 0.12);
+}
+
+/* Panels */
+.instrument__panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Content-sized by default; the open collapsible panels below claim the slack. */
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+}
+.instrument__panel:last-child {
+  border-bottom: 0;
+}
+/* The two collapsible panels (`<details>`): closed, a panel is just its header, and the space
+   goes to whichever is open. The file browser takes the slack; the console keeps the ~40% it
+   had, so opening it doesn't swallow the browser above. */
+.instrument__panel--collapsible {
+  flex: 0 0 auto;
+}
+.instrument__panel--collapsible[open] {
+  flex: 1 1 auto;
+}
+.instrument__panel--console[open] {
+  flex: 0 1 40%;
+  min-height: 180px;
+}
+/* A <details>' children sit inside a `::details-content` box in browsers that have it, which
+   would otherwise be a block and break the console body's `flex: 1` sizing. Where the pseudo
+   isn't supported the children are flex items of the panel already, and this rule is a no-op. */
+.instrument__panel--collapsible[open]::details-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.instrument__panelhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  list-style: none;
+}
+/* Only the collapsible panels' heads are `<summary>` elements you can click to open them —
+   "Run to start" wears the same class on a plain `<div>`, and a pointer cursor over a head that
+   does nothing reads as a dead control. */
+summary.instrument__panelhead {
+  cursor: pointer;
+}
+/* Same marker suppression as `.rail__details`: the chevron in the title is the disclosure. */
+.instrument__panelhead::-webkit-details-marker {
+  display: none;
+}
+.instrument__panel--collapsible:not([open]) > .instrument__panelhead {
+  border-bottom: 0;
+}
+.instrument__panel--collapsible[open] > .instrument__panelhead > .instrument__paneltitle > .rail__chevron {
+  transform: rotate(90deg);
+}
+.instrument__paneltitle {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-muted);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+/* The staged protocol is otherwise indistinguishable whether the instrument is idle or mid-run —
+   the per-line highlight below only shows once you've found the right line, so the panel needs
+   its own "this is live" signal first. Pulses like `.instrument__busydot` for the same reason:
+   a static badge reads as a label, a pulsing one reads as "happening right now". */
+.instrument__runbadge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  animation: instrument-busy-pulse 1.4s ease-in-out infinite;
+}
+/* The finished run's total time, beside "Run complete" — unlike `.instrument__runbadge` above
+   it isn't reporting something in progress, so it doesn't pulse. */
+.instrument__runbadge--done {
+  color: var(--good);
+  border-color: var(--good);
+  animation: none;
+}
+/* The "Run complete" banner: a run this session watched finish, above the run being staged next
+   (`InstrumentRun`'s `RunComplete`). Its own accent, distinct from the panel border below it, is
+   what keeps a glance able to tell "a run just finished" from "here's what's staged next" even
+   before reading either heading. */
+.instrument__complete {
+  border-bottom-color: var(--good);
+  background: var(--good-dim);
+}
+.instrument__completeactions {
+  display: flex;
+  gap: 8px;
+  padding: 0 14px 14px;
+}
+.instrument__empty {
+  padding: 14px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+/* The "nothing to point at" state carries a button, so it stacks rather than being one line. */
+.instrument__empty p {
+  margin: 0 0 10px;
+}
+
+
+/* File browser */
+.instrument__dirs {
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.instrument__dir {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.instrument__dirhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.instrument__dirbtns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.instrument__dirname {
+  font-size: 13px;
+  color: var(--ink);
+}
+.instrument__dirpath {
+  display: block;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+.instrument__dirmeta {
+  padding: 6px 12px 0;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+.instrument__dir .rail__note {
+  padding: 10px 12px;
+}
+.instrument__group {
+  padding: 8px 12px;
+}
+.instrument__grouptitle {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-muted);
+  margin-bottom: 4px;
+}
+.instrument__files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.instrument__file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+}
+.instrument__filename {
+  /* Takes the slack, so a row's buttons (Open, Retrieve) sit together at the right edge. */
+  flex: 1;
+  font-size: 12px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* The staged run — protocol and plate as two equal areas, since they are the two halves of the
+   same object. `auto-fit` rather than a media query because what matters is the width of *this
+   column* (the rail takes a fixed slice of the window), so the split has to respond to the
+   container: two columns when there is room for both, stacked when there isn't. The 1px gap over
+   a border-coloured backdrop draws the divider in either arrangement, which a border on one edge
+   could not. */
+.devrun {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  min-height: 0;
+}
+.devrun__part {
+  background: var(--plane);
+  padding: 12px 14px;
+  min-width: 0;
+  /* Each half scrolls on its own rather than the panel scrolling as a whole: a 60-step melt
+     protocol beside a 96-well plate would otherwise make the shorter one unreachable. The cap is
+     generous because `.instrument__content` scrolls too — it only stops a long protocol burying the
+     panels below, it isn't the panel's height budget. */
+  max-height: 420px;
+  overflow: auto;
+}
+/* The run's name and its file's name — the two parts of a staged run that are typed rather than
+   selected from a file, so they get real labelled fields rather than the read-only headings the
+   two halves use. Stacked, with a fixed label column so the inputs line up under each other. */
+.devrun__name {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px 0;
+}
+.devrun__namelabel {
+  flex: 0 0 auto;
+  min-width: 13ch;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+/* The extension the app adds, shown next to the field so the name reads as a whole file name
+   without the field having to accept (or validate) the suffix itself. */
+.devrun__nameinput {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 44ch;
+  padding: 5px 8px;
+  background: var(--plane);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+}
+.devrun__nameinput:focus {
+  outline: none;
+  border-color: var(--neon-cyan);
+}
+/* Marks a required field that hasn't been filled in — the experiment-name asterisk on Overview
+   (`OverviewView`'s ExperimentHeader), in the same tone the rail's blocked-Start note uses. */
+.devrun__required {
+  margin-left: 4px;
+  color: var(--warn);
+}
+.devrun__parthead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.devrun__parttitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+}
+.devrun__source {
+  font-size: 11px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.devrun__badge {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid var(--neon-magenta);
+  border-radius: 999px;
+  color: var(--neon-magenta);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.devrun__meta {
+  font-size: 11px;
+  color: var(--ink-muted);
+  margin-bottom: 6px;
+}
+.devrun__hint {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+/* Start sits at the right of the experiment panel's header, the panel's one primary action. */
+.instrument__start {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+/* The header carries the name, the running file's state and Start: the name takes the slack and
+   truncates, so Start never wraps under it. */
+.instrument__experiment > .instrument__panelhead {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.instrument__panelname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The running file's State / Plate reads — the rail's `.devstat` rows, laid out inline. */
+.instrument__runstate {
+  display: flex;
+  gap: 14px;
+}
+.instrument__runstate .devstat {
+  gap: 6px;
+  padding: 0;
+  border-bottom: 0;
+}
+/* Start's reason, the deposit report and the follower's note, under the header they belong to. */
+.instrument__panelnotes {
+  padding: 0 14px 10px;
+  font-size: 11px;
+}
+/* The rail's "Last run" section's two buttons. */
+.instrument__lastrunactions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+/* The instrument block's buttons, separated from the connect row above them. */
+.instrument__buttons {
+  margin-top: 10px;
+}
+/* A file's saved USB traffic log — core's one-line-per-message text, as-is. */
+.instrument__savedlog {
+  margin: 0;
+  white-space: pre;
+  font-size: 11px;
+}
+
+/* The deposit phase's report, when it has something to say (`usb.md` §7.4). */
+.instrument__startnote {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+
+/* What the plate and protocol say about each other, between the two halves they're about
+   (`InstrumentRun`'s RunChecks). An error is what keeps Start disabled; a warning is advice. */
+.devrun__checks {
+  list-style: none;
+  margin: 0 0 1px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+}
+.devrun__check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--plane);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-dim);
+}
+.devrun__checkicon {
+  flex: 0 0 auto;
+  font-weight: 700;
+  line-height: 1.45;
+}
+.devrun__check--error {
+  background: rgba(255, 90, 90, 0.08);
+  color: var(--ink);
+}
+.devrun__check--error .devrun__checkicon {
+  color: var(--danger);
+}
+.devrun__check--warning .devrun__checkicon {
+  color: var(--warn);
+}
+
+/* Traffic console */
+.instrument__panel--console {
+  background: var(--plane);
+}
+.instrument__consoleopts {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.instrument__consolebody {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px 14px;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.instrument__line {
+  display: flex;
+  gap: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.instrument__linetime {
+  color: var(--ink-muted);
+  flex: 0 0 auto;
+}
+.instrument__linedir {
+  flex: 0 0 auto;
+}
+.instrument__line.is-out .instrument__linedir {
+  color: var(--neon-cyan);
+}
+.instrument__line.is-in .instrument__linedir {
+  color: var(--neon-magenta);
+}
+.instrument__linechan {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+}
+/* A message the host never asked for — a channel-0/2 payload, or a channel-1 reply with no
+   pending request. Worth spotting: it is what a naive per-command reader would have silently
+   mistaken for an answer. */
+.instrument__line.is-unsolicited .instrument__linechan {
+  color: var(--warn);
+}
+.instrument__linebody {
+  color: var(--ink-2);
+  min-width: 0;
+}
+.instrument__line.is-out .instrument__linebody {
+  color: var(--ink);
+}
+.instrument__linebytes {
+  color: var(--ink-muted);
+}
+/* A transferIn/transferOut failure — a retried one is `--warn` (the pump is expected to recover),
+   a fatal one (the read pump giving up, or a write that never went out) is `--danger`. */
+.instrument__line.is-error .instrument__linechan,
+.instrument__line.is-error .instrument__linebody {
+  color: var(--warn);
+}
+.instrument__line.is-fatal .instrument__linechan,
+.instrument__line.is-fatal .instrument__linebody {
+  color: var(--danger);
+}
+
+/* Narrow: the rail stacks above the content, matching `.curves`' own narrow behaviour. */
+@media (max-width: 900px) {
+  /* Stacked, the column is as tall as its content, so an open panel sizes itself rather than
+     splitting a fixed height; the console keeps a bounded, scrolling body. */
+  .instrument__panel--collapsible[open],
+  .instrument__panel--console[open] {
+    flex: 0 0 auto;
+  }
+  .instrument__consolebody {
+    max-height: 320px;
+  }
+}
+
+/* ── Protocol editor (`components/protocol/`) ────────────────────────────────────────────────
+   The Protocol view's own listing, drawn by `EditableListing` in both modes — reading it and
+   editing it are the same rows with the same metrics, so pressing Edit lights up what is already
+   on screen instead of reflowing it. The lines themselves are `.decoded__proto*`, unchanged: what
+   is listed is the same decode of the same text either way.
+
+   What the editor adds is a click target per *group* — the header's three directives, or a step
+   with the modifiers riding on it — and, in a gutter to their left, that group's +/− pair. The
+   gutter is on the left because the rows are as wide as their reading: a trailing pair sat against
+   the right edge of the panel, where the popover it opens has nowhere to lay its fields out. Its
+   width is fixed (two icon buttons and the gap between them) rather than content-sized, because
+   each group is its own grid — a `max-content` track would come out narrower on the groups with
+   only a + (the header), none at all (END), or none yet (reading), and the program text would step
+   in and out as those changed.
+
+   The two buttons of a pair sit at different heights, because they act on different things. − acts
+   on *this* group, so it lines up with the group's first line. + acts on the *gap below* it, so it
+   is pushed to the group's bottom edge and pulled up by half its own height, leaving it straddling
+   the boundary between the two groups the new step would land between — which is also why the
+   header carries one and END doesn't: every boundary gets exactly one +, including the one above
+   step 1, and none is left over after the last step. */
+.protoedit {
+  /* Two 22px icon buttons and the 4px between them. */
+  --protoedit-gutter: 48px;
+}
+.protoedit__line {
+  display: grid;
+  grid-template-columns: var(--protoedit-gutter) 1fr;
+  gap: 2px 12px;
+  align-items: start;
+  border-radius: var(--radius-sm);
+}
+/* The group's click target. A real button, so each group is keyboard-reachable in order, but
+   styled as the lines of text it is — the affordance is the hover, not a box. It stacks whole
+   `.decoded__protoline` grids, which is what keeps the step numbers, directives and readings on
+   the same columns as the listing everywhere else in the app. */
+.protoedit__rowbtn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 2px 6px;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.protoedit__rowbtn:hover {
+  border-color: var(--border-strong);
+  background: var(--raised);
+}
+/* END, and every group while the protocol is only being read: same metrics, no affordance. */
+.protoedit__rowbtn.is-inert,
+.protoedit__rowbtn.is-inert:hover {
+  cursor: default;
+  border-color: transparent;
+  background: transparent;
+}
+.protoedit__line.is-open .protoedit__rowbtn {
+  border-color: var(--neon-cyan);
+  background: var(--neon-cyan-dim);
+}
+.protoedit__rowtools {
+  display: flex;
+  gap: 4px;
+  /* − at the group's first line; the + below takes itself to the other end. Stretched over the
+     whole group (the row's own `align-items: start` would otherwise shrink it to the buttons)
+     so "the other end" means the group's bottom, however many lines it has. */
+  align-items: start;
+  align-self: stretch;
+}
+.protoedit__iconbtn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+/* Straddle the boundary below the group: to the bottom of the group's box, then down by half the
+   button (`translateY(50%)`) plus half the 3px between one group's box and the next, so the
+   button's centre lands on the gap's centre rather than on the box's edge. It overhangs into the
+   next group's row, which nothing clips and nothing else occupies — the gutter beside a group's
+   first line belongs to −. */
+.protoedit__iconbtn--ins {
+  align-self: end;
+  transform: translateY(calc(50% + 1.5px));
+}
+.protoedit__iconbtn:hover {
+  border-color: var(--neon-cyan);
+  color: var(--neon-cyan);
+}
+.protoedit__iconbtn--del:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.protoedit__legend {
+  margin-top: 10px;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+.protoedit__note {
+  color: var(--warn);
+}
+
+/* The per-row form, in a native popover (top layer, Escape and light dismiss are the browser's —
+   see `ProtocolEditor`'s `StepPopover`). Positioned from the row's own rect, since anchor
+   positioning isn't broadly supported yet. */
+.stepform__popover {
+  position: fixed;
+  margin: 0;
+  padding: 10px 12px 12px;
+  /* Wide enough for the longest control it holds — the step-kind select, whose options carry a
+     verb *and* a phrase ("PLATEREAD — read the plate") — so a field is never cut off; capped at
+     the viewport, since `StepPopover` only slides the box back inside, it can't shrink it. */
+  width: max-content;
+  max-width: min(40rem, calc(100vw - 24px));
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  overflow: visible;
+}
+.stepform__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.stepform__title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--neon-cyan);
+}
+/* The commit control. Enter does the same thing from any field, so this is a second door rather
+   than the only one — but it's the one that says the popup is a change you make, not a live edit. */
+.stepform__ok {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--good);
+  border-radius: var(--radius-sm);
+  background: var(--good-dim);
+  color: var(--good);
+  cursor: pointer;
+}
+.stepform__ok:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--ink-muted);
+}
+.stepform {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* One operand per line: label, control, then the units — which are shown, never edited, because
+   they are a fact about the directive rather than a value (`protocol.md` §3.3). */
+.stepform__line {
+  display: grid;
+  /* The control track grows to whatever it holds — a `<select>` is as wide as its widest option —
+     rather than being pinned at 7.5em, which left the longer menus spilling over the units. */
+  grid-template-columns: 8.5em minmax(7.5em, max-content) 1fr;
+  gap: 2px 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.stepform__label {
+  color: var(--ink-2);
+}
+.stepform__units {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.stepform__input {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+}
+.stepform__select {
+  width: auto;
+  min-width: 7.5em;
+  max-width: 24em;
+}
+.stepform__line.is-invalid .stepform__input {
+  border-color: var(--danger);
+}
+.stepform__error {
+  grid-column: 2 / -1;
+  font-size: 11px;
+  color: var(--danger);
+}
+.stepform__check {
+  justify-self: start;
+}
+
+/* ---- Browser (non-Chromium) warning modal ------------------------------- */
+.browserwarn {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-content: center;
+  background: rgb(0 0 0 / 0.55);
+}
+.browserwarn__box {
+  display: grid;
+  gap: 16px;
+  max-width: 26em;
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+}
+.browserwarn__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.browserwarn__box .btn {
+  justify-self: start;
+}
+
+/* A sentence under a control that explains a gesture the control itself can't show —
+   the baseline window's "leave both boxes empty to follow the file" is one. */
+.rail__hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+/* ---- Cq plate (table mode's plate arrangement) ------------------------------------------- */
+/* The instrument's own layout: 12 numbered columns and 8 lettered rows, every position present
+ * including the ones that never amplified. Sits above the detail table rather than replacing it —
+ * see the 板图 / 明细表 switch. */
+.cqbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.cqbar__spacer {
+  flex: 1;
+}
+.cqplate-wrap {
+  overflow: auto;
+  padding: 14px 16px 18px;
+}
+.cqplate {
+  border-collapse: separate;
+  border-spacing: 4px;
+}
+.cqplate__corner,
+.cqplate__head {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-muted);
+  text-align: center;
+  min-width: 54px;
+}
+.cqplate__corner {
+  text-align: left;
+  padding-left: 4px;
+}
+.cqplate__cell {
+  min-width: 54px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(120, 200, 255, 0.03);
+  padding: 0;
+  text-align: center;
+}
+.cqplate__cell.is-empty {
+  border-style: dashed;
+  background: none;
+  opacity: 0.4;
+}
+.cqplate__pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 100%;
+  height: 100%;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}
+.cqplate__pick:hover {
+  background: rgba(120, 200, 255, 0.08);
+}
+.cqplate__value {
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.cqplate__value.is-none {
+  color: var(--ink-muted) !important;
+}
+
+/* ---- Recolouring curves by hand ----------------------------------------------------------- */
+/* Floats over the plot while wells are selected, like the Log Scale checkbox in the opposite
+ * corner: both are ways of looking at what is already drawn, so neither belongs in the rail. */
+.plot__colors {
+  position: absolute;
+  top: 14px;
+  left: 18px;
+  /* Above the plot's own canvas and its interaction layer, which fill this box and paint later in
+   * the DOM — without this the row is visible but the chart swallows every click on it. */
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: rgba(9, 15, 26, 0.92);
+}
+.plot__colorslabel {
+  font-size: 11px;
+  color: var(--ink-2);
+  margin-right: 2px;
+}
+.plot__swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.plot__swatch:hover {
+  transform: scale(1.12);
+}
+.plot__colorsbtn {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  color: var(--ink-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.plot__colorsbtn:hover {
+  color: var(--ink);
+  border-color: var(--border-strong);
+}
+/* Shift-selected wells: a ring, not a fill — the cell's fill and border already mean "enabled"
+ * and "sample type", and a third fill would erase both. */
+.wm-cell.is-sel {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}

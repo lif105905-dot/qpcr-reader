@@ -1,0 +1,770 @@
+/**
+ * `.pcrd` files — CFX Manager's saved-experiment document. See `pcrd.md` for the full
+ * reverse-engineered format.
+ *
+ * A `.pcrd` shares its container (single-entry encrypted ZIP) and password with `.pltd`/
+ * `.prcl` (`pltd.ts`, `zipsingle.ts`). Decrypted and inflated, the entry is one large XML
+ * document (`<experimentalData2>`) that gathers everything a `.zpcr` spreads across many
+ * files: the plate setup, the protocol, every plate read (as text, not the binary
+ * `.Plateread` layout), `RunInfo.xml`, `runlog.xml`, plus analysis/UI state with no `.zpcr`
+ * equivalent.
+ *
+ * {@link parsePcrd} decodes it into a {@link Zpcr} — the same public shape `parseZpcr`
+ * produces — so callers and UI code work with either format interchangeably. A `.pcrd` has no
+ * inner files, so the returned `Zpcr.archive` is empty; subtrees this module does not
+ * specifically decode (`dataAnalysisParameters`, `PersistedData`, …) are still visible,
+ * verbatim, in the full raw document returned as {@link Pcrd.xml} — the web app's `.pcrd` raw
+ * view renders that as a real, navigable XML tree rather than pretending these subtrees are
+ * files.
+ */
+
+import type {
+  ArchiveAccess,
+  CurveOptions,
+  DcalEntry,
+  PlateRead,
+  PlateReadField,
+  PlateReadTemp,
+  PltdEntry,
+  PrclEntry,
+  ProtocolDocument,
+  RunMetadata,
+  WellFactors,
+  WellReading,
+  Zpcr,
+} from "./types.js";
+import type { PlateDefinition } from "./pltd.js";
+import { parsePlatesetup2 } from "./pltd.js";
+import { parseProtocol2 } from "./prcl.js";
+import type { Dcal, DcalBlock } from "./dcal.js";
+import { dyeChannelLookup } from "./dcal.js";
+import { zipCryptoDecrypt } from "./zipcrypto.js";
+import { inflateRaw } from "./inflate.js";
+import { parseSingleEntryZip } from "./zipsingle.js";
+import {
+  findElement,
+  firstTagText,
+  splitElements,
+  stripBomBytes,
+  unescapeXml,
+  type XmlElement,
+} from "./xmlLite.js";
+import { parseRunInfo } from "./runinfo.js";
+import { extractTemps } from "./temps.js";
+import { extractLeds } from "./leds.js";
+import { buildWellTable, CHANNELS, COLUMNS, WELLS_PER_CHANNEL } from "./plateread.js";
+import {
+  toChannels,
+  toCurves,
+  toDarkCurves,
+  toSteps,
+  toLedCurves,
+  toTemperatureCurves,
+} from "./pivot.js";
+import { compareRefToCal, parseFactoryRefRowCal } from "./refcal.js";
+
+const textDecoder = new TextDecoder("utf-8");
+
+/** Metadata about the `.pcrd` ZIP container (independent of decryption success). */
+export interface PcrdContainer {
+  /** Inner entry file name inside the `.pcrd` ZIP (a GUID + `.pcrd`). */
+  innerName: string;
+  /** ZIP compression method: 8 = DEFLATE, 9 = DEFLATE64. */
+  compressionMethod: number;
+  /** Whether the entry is ZipCrypto-encrypted (always true for CFX files). */
+  encrypted: boolean;
+  /** CRC-32 of the decompressed entry (from the central directory). */
+  crc32: number;
+  /** Compressed (and encrypted) size in bytes. */
+  compressedSize: number;
+  /** Decompressed size in bytes. */
+  uncompressedSize: number;
+}
+
+/** Options for {@link parsePcrd}. */
+export interface PcrdOptions {
+  /** The decryption password — the same fixed password used for `.pltd`/`.prcl`. */
+  password?: string;
+}
+
+/** The result of {@link parsePcrd}: always the container, plus the run when decoded. */
+export interface Pcrd {
+  container: PcrdContainer;
+  /**
+   * The decoded document, in the same shape `parseZpcr` returns, when decryption + parse
+   * succeeded.
+   */
+  zpcr?: Zpcr;
+  /** The raw decoded XML, when decryption + inflate succeeded (before parsing). */
+  xml?: string;
+  /** True when the entry is encrypted but no password was supplied — nothing was attempted. */
+  needsPassword?: boolean;
+  /** Set when decoding failed (e.g. wrong password); `zpcr`/`xml` are then undefined. */
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Plate reads: <plateRead><PlateRead V="1">…</PlateRead></plateRead>
+// ---------------------------------------------------------------------------
+
+/** Maps a `PlateReadDataHeader` scalar field name to the canonical `*TEMP*` key `temps.ts`
+ * expects (matching the names `.Plateread`'s own descriptor dictionary uses — see
+ * `plateread.md` §3), so temperature extraction/labeling is shared verbatim with the binary
+ * decoder. */
+const TEMP_FIELD_MAP: Record<string, string> = {
+  BlockTmp: "BLOCKTEMP",
+  AmbTmp: "AMBIENTTEMP",
+  ShtTmp: "SHUTTLETEMP",
+  SamTmp: "SAMPLETEMP",
+  LidTmp: "LIDTEMP",
+  FanOffTmp: "FANOFFTEMP",
+  FanOnTmp: "FANONTEMP",
+};
+
+/** Placeholder for a reading the XML didn't supply — a `.pcrd` may hold a short `PAr` list. */
+function missingReading(): WellReading {
+  return { mean: NaN, std: NaN, min: NaN, max: NaN };
+}
+
+/** Maps a `PlateReadDataHeader` LED-current field name to the canonical `LEDCURRENT*` key
+ * `leds.ts` expects (the names the binary descriptor dictionary uses — `plateread.md` §3), so
+ * extraction/labeling is shared verbatim with the binary decoder. The XML spells them
+ * `LedCur01`…`LedCur06` (`pcrd.md` §2.2). */
+const LED_FIELD_MAP: Record<string, string> = {
+  LedCur01: "LEDCURRENT01",
+  LedCur02: "LEDCURRENT02",
+  LedCur03: "LEDCURRENT03",
+  LedCur04: "LEDCURRENT04",
+  LedCur05: "LEDCURRENT05",
+  LedCur06: "LEDCURRENT06",
+};
+
+/** Parse a `;`-separated `PAr` float list into `WellReading` records of four floats each. */
+function parsePAr(text: string): WellReading[] {
+  if (!text) return [];
+  const values = text.split(";").map(Number);
+  const records: WellReading[] = [];
+  for (let i = 0; i + 3 < values.length; i += 4) {
+    records.push({
+      mean: values[i] as number,
+      std: values[i + 1] as number,
+      min: values[i + 2] as number,
+      max: values[i + 3] as number,
+    });
+  }
+  return records;
+}
+
+/**
+ * Decode one `<plateRead>` element's XML into a {@link PlateRead}, matching the shape
+ * `decodePlateRead` produces from the binary `.Plateread` file for the same cycle — so both
+ * formats feed the same `toCurves()`/`toDarkCurves()`/`toTemperatureCurves()` pivots.
+ */
+function decodePcrdPlateRead(el: XmlElement, index: number): PlateRead {
+  const body = el.inner;
+  const hdrEl = findElement(body, "Hdr");
+  const hdr = hdrEl ? (findElement(hdrEl.inner, "PlateReadDataHeader")?.inner ?? "") : "";
+  const dataEl = findElement(body, "Data");
+  const dataPAr = dataEl ? (findElement(dataEl.inner, "PAr")?.inner ?? "") : "";
+
+  const drkEl = findElement(hdr, "DrkCrnt");
+  const drkPAr = drkEl ? (findElement(drkEl.inner, "PAr")?.inner ?? "") : "";
+
+  const wellsFlat = parsePAr(dataPAr);
+  const wells = buildWellTable((i) => wellsFlat[i] ?? missingReading());
+  const dark = parsePAr(drkPAr);
+
+  const scalar = (name: string): string | undefined => firstTagText(hdr, name);
+  const num = (name: string, fallback = 0): number => {
+    const v = scalar(name);
+    return v !== undefined && v !== "" ? Number(v) || fallback : fallback;
+  };
+
+  const temps: PlateReadTemp[] = extractTemps(
+    Object.entries(TEMP_FIELD_MAP).flatMap(([xmlName, canonical]) => {
+      const v = scalar(xmlName);
+      if (v === undefined || v === "") return [];
+      const value = Number(v);
+      if (!Number.isFinite(value)) return [];
+      return [{ name: canonical, offset: 0, length: 4, flag: 1, float: value, int: value, hex: "" }];
+    }),
+  );
+
+  const leds = extractLeds(
+    Object.entries(LED_FIELD_MAP).flatMap(([xmlName, canonical]) => {
+      const v = scalar(xmlName);
+      if (v === undefined || v === "") return [];
+      const value = Number(v);
+      if (!Number.isInteger(value)) return [];
+      return [
+        { name: canonical, offset: 0, length: 4, flag: 1, float: value, int: value, hex: "" },
+      ];
+    }),
+  );
+
+  // The XML header's own children as the same uniform key/value table a binary read builds
+  // from its descriptor dictionary (see `PlateRead.fields`); no `binary` provenance, since
+  // these values are typed text rather than an untyped byte range. `DrkCrnt` is the nested
+  // DARKDATA array, surfaced as `dark` instead of as a header scalar.
+  const fields: PlateReadField[] = hdr
+    ? splitElements(hdr)
+        .filter((e) => e.name.toLowerCase() !== "drkcrnt")
+        .map((e) => ({ name: e.name, value: unescapeXml(e.inner) }))
+    : [];
+
+  const cycle = num("Cycle");
+  // Not a real file — there's no `.Plateread` inside a `.pcrd`. `PlateRead.fileName` still
+  // needs some stable, human-readable value; this is honest about not being one, unlike a
+  // fabricated `.Plateread` name would be.
+  const fileName = `plateRead[cycle ${cycle}]`;
+  const timestampRaw = scalar("Time");
+  const timestamp =
+    timestampRaw && !Number.isNaN(Date.parse(timestampRaw)) ? timestampRaw : undefined;
+
+  return {
+    index,
+    cycle,
+    step: num("Step"),
+    channelMask: num("ChMask"),
+    fileName,
+    blockTempC: temps.find((t) => t.key === "BLOCKTEMP")?.celsius,
+    temps,
+    leds,
+    timestamp,
+    fields,
+    wells,
+    dark,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Calibration: <runData><calibrationCollection><CalibrationCollection>…
+// ---------------------------------------------------------------------------
+
+/**
+ * Matches one XML-encoded `.Dcal` payload-block key inside `<PRs>`, e.g.
+ * `dye0_x003A_60_x003A_PR` (`_x003A_` is .NET's `XmlConvert.EncodeName` escape for `:`, since a
+ * bare colon isn't legal in an unqualified element name — so the binary `.Dcal` key `dye0:60:PR`
+ * round-trips through this XML form with its colons replaced). Lowercase here, unlike the
+ * binary format's `Dye`/`Empty`; see `dcal.ts`'s `BLOCK_RE` for the binary-file equivalent.
+ */
+const XML_BLOCK_RE = /^(dye|empty)(0|180)_x003A_(\d+)_x003A_PR$/i;
+
+/**
+ * Parse one `<CalibrationData V="1">` element (one dye × one plate type) into a {@link Dcal},
+ * matching `parseDcal`'s output shape for the binary `.Dcal` format as closely as the XML form
+ * allows. `channelByFluor` (from the collection's shared `<Fluors>` list) supplies the
+ * 0-based primary channel, since `CalibrationData` itself doesn't repeat it.
+ *
+ * Cross-validated against the binary `.Dcal` files for the same run: `Dye`/`Plate`/`Channels`/
+ * `Wells`/`Notes` and every payload block value match `parseDcal`'s output exactly (see
+ * `pcrd.md` §2.6).
+ */
+function parseCalibrationDataElement(
+  el: XmlElement,
+  channelByFluor: Map<string, number>,
+): Dcal | null {
+  const body = el.inner;
+  const text = (name: string): string => firstTagText(body, name) ?? "";
+
+  const dye = unescapeXml(text("Dye"));
+  const plate = unescapeXml(text("Plate"));
+  if (!dye || !plate) return null;
+
+  const channelCount = Number(text("Channels")) || 6;
+  const wellCount = Number(text("Wells")) || 108;
+  const notes = text("Notes") || undefined;
+
+  // "2|MM/DD/YYYY HH:MM:SS|<.NET timezone type name>|username|fullName|signature|app|appVersion|guid"
+  // — a flattened form of the binary format's separate SECURITYYEAR..SECURITYAPPVER fields. The
+  // timezone field is a serialized .NET type name here, not a numeric offset, so there's no
+  // `timezoneOffsetMin` to recover.
+  const securityParts = text("Security").split("|");
+  const dateMatch = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})$/.exec(
+    securityParts[1] ?? "",
+  );
+  const date = dateMatch
+    ? new Date(
+        Date.UTC(
+          Number(dateMatch[3]),
+          Number(dateMatch[1]) - 1,
+          Number(dateMatch[2]),
+          Number(dateMatch[4]),
+          Number(dateMatch[5]),
+          Number(dateMatch[6]),
+        ),
+      )
+    : undefined;
+
+  const outerPRs = findElement(body, "PRs");
+  const innerPRs = outerPRs ? splitElements(outerPRs.inner)[0] : undefined;
+  const blockEls = innerPRs ? splitElements(innerPRs.inner) : [];
+
+  const blocks: DcalBlock[] = [];
+  for (const blockEl of blockEls) {
+    const m = XML_BLOCK_RE.exec(blockEl.name);
+    if (!m) continue;
+    const plateReadEl = findElement(blockEl.inner, "PlateRead");
+    const dataEl = plateReadEl ? findElement(plateReadEl.inner, "Data") : undefined;
+    const parText = dataEl ? (findElement(dataEl.inner, "PAr")?.inner ?? "") : "";
+    const values = parText ? parText.split(";").map(Number) : [];
+    blocks.push({
+      kind: (m[1] as string).toLowerCase() === "dye" ? "dye" : "empty",
+      rotationDeg: m[2] === "180" ? 180 : 0,
+      temperatureC: Number(m[3]),
+      channelCount,
+      wellCount,
+      values,
+    });
+  }
+
+  return {
+    dye,
+    plate,
+    primaryChannel: channelByFluor.get(dye) ?? 0,
+    channelCount,
+    wellCount,
+    factory: text("Factory").toLowerCase() === "true",
+    // Every `AmbTmp`/`ShtTmp` in this document's per-block headers is a placeholder zero (the
+    // instrument-side values the binary `.Dcal` carries at the top level aren't preserved when
+    // CFX Manager re-serializes into a `.pcrd`) — reporting `0` here would be reporting a
+    // fabricated reading, so both are left unset rather than guessed.
+    ambientTempC: undefined,
+    shuttleTempC: undefined,
+    notes,
+    // Per-scan serials (`HeadSerNum`/`AlphaSerNum`/`BaseSerNum`) are likewise blank in every
+    // block header of this document — not populated here, for the same reason.
+    serials: {},
+    security: {
+      date,
+      username: securityParts[3] || undefined,
+      fullName: securityParts[4] || undefined,
+      app: securityParts[6] || undefined,
+      appVersion: securityParts[7] || undefined,
+    },
+    blocks,
+    fields: [], // no ICFF index for an XML-derived entry — see dcal.ts's `fields` doc comment
+  };
+}
+
+/**
+ * Decode `<runData><calibrationCollection>` into the same {@link DcalEntry} shape
+ * `zpcr.calibrations()` returns for a `.zpcr`'s real `.Dcal` files — the two agree dye-for-dye,
+ * plate-type-for-plate-type, and value-for-value on the calibration data shared between a
+ * `.pcrd` and the `.zpcr` for the same run (see `pcrd.md` §2.6). `runDataEl` is `<runData>`'s
+ * inner XML.
+ */
+function decodeCalibrationCollection(runDataEl: string): DcalEntry[] {
+  const wrapper = findElement(runDataEl, "calibrationCollection");
+  const coll = wrapper ? findElement(wrapper.inner, "CalibrationCollection") : undefined;
+  if (!coll) return [];
+
+  const fluorsEl = findElement(coll.inner, "Fluors");
+  const fluorsAr = fluorsEl ? findElement(fluorsEl.inner, "Ar") : undefined;
+  const channelByFluor = new Map<string, number>();
+  for (const item of fluorsAr ? splitElements(fluorsAr.inner) : []) {
+    const fluorophorEl = findElement(item.inner, "Fluorophor");
+    if (!fluorophorEl) continue;
+    const name = unescapeXml(firstTagText(fluorophorEl.inner, "Name") ?? "");
+    if (!name) continue;
+    channelByFluor.set(name, Number(firstTagText(fluorophorEl.inner, "Channel") ?? "0"));
+  }
+
+  const entries: DcalEntry[] = [];
+  for (const listName of ["FactoryCals", "UserCals"]) {
+    const listEl = findElement(coll.inner, listName);
+    const ar = listEl ? findElement(listEl.inner, "Ar") : undefined;
+    for (const item of ar ? splitElements(ar.inner) : []) {
+      const calEl = findElement(item.inner, "CalibrationData");
+      const dcal = calEl ? parseCalibrationDataElement(calEl, channelByFluor) : null;
+      if (!dcal) continue;
+      // Not a real archive entry — named to match the corresponding `.zpcr`'s `.Dcal` filename
+      // for consistency (see dcal.md's naming convention), not because this file exists.
+      entries.push({ name: `${dcal.dye}_${dcal.plate}.Dcal`, dcal });
+    }
+  }
+  return entries;
+}
+
+// ---------------------------------------------------------------------------
+// Analysis parameters: <dataAnalysisParameters>…<fluorDataAnalysisParam fluorId=…>
+// ---------------------------------------------------------------------------
+
+/**
+ * The per-fluorophore threshold a saved run *pinned by hand* — `thresholdOverrideValue` on a
+ * `fluorDataAnalysisParam` whose `autoCalculateThreshold` is `False` (`pcrd.md` §2.5,
+ * `threshold.md` §5.3), keyed by the dye's display name.
+ *
+ * Three details make this less obvious than it looks, each learned the hard way:
+ *
+ * - **The document carries a `fluorDataAnalysisParam` for every fluorophore CFX knows about**, not
+ *   just the ones on this plate, so the first entry usually belongs to a dye the run never used.
+ *   The `fluorId` is the only thing that identifies them, and it is resolved here against the
+ *   plate's own `<dyeLayer><fluor fluorId= fluorName=>` entries — an id with no dye layer is
+ *   dropped rather than guessed at.
+ * - **Only `autoCalculateThreshold="False"` entries mean anything.** An auto entry carries
+ *   `thresholdOverrideValue="NaN"`, and the auto value CFX actually computed is stored nowhere.
+ * - **`baselineBeginRepeat`/`baselineEndRepeat` are deliberately not read.** Both fluorophores of
+ *   the RVP sample persist `2`/`9` while also carrying `autoCalculateBaseline="True"`, and
+ *   recovering CFX's real baseline windows from its exported curves puts several wells nowhere
+ *   near 2–9 (`threshold.md` §A.7). They are the defaults the auto search starts from, not the
+ *   region it used, so honouring them would make results *worse*.
+ */
+/**
+ * The baseline window a `.pcrd` declares for its own analysis, from its
+ * `<dataAnalysisParameters>` (see {@link Zpcr.declaredBaselineWindow} for why it is read at all).
+ *
+ * Every fluorophore in a saved run carries its own `fluorDataAnalysisParam` with the same
+ * Data-Window numbers on a single-dye plate, so the first entry that carries a usable pair stands
+ * for the run. Values are the 1-based inclusive `baselineBeginRepeat`/`baselineEndRepeat` cycles;
+ * anything missing, equal, or outside the run falls back to `undefined` (this library's own
+ * `baselineRegion` heuristic) rather than to a guess.
+ */
+function readDeclaredBaselineWindow(
+  params: XmlElement | undefined,
+): { beginCycle: number; endCycle: number } | undefined {
+  if (!params) return undefined;
+  // The numbers live on the inner `<pCRDataAnalysisParams …/>` of each fluorophore's params, not on
+  // the `fluorDataAnalysisParam` wrapper — `baselineBeginRepeat="2" baselineEndRepeat="9"` sits
+  // beside `pCRBaseLineMethod="DataWindow"` and the auto flags.
+  for (const m of params.inner.matchAll(/<pCRDataAnalysisParams\b[^>]*>/g)) {
+    const begin = Number(/baselineBeginRepeat="([^"]*)"/.exec(m[0])?.[1]);
+    const end = Number(/baselineEndRepeat="([^"]*)"/.exec(m[0])?.[1]);
+    if (Number.isInteger(begin) && Number.isInteger(end) && begin >= 1 && end > begin) {
+      return { beginCycle: begin, endCycle: end };
+    }
+  }
+  return undefined;
+}
+
+function decodePersistedThresholds(
+  params: XmlElement | undefined,
+  plateSetupInner: string | undefined,
+): Map<string, number> | undefined {
+  if (!params || !plateSetupInner) return undefined;
+
+  const nameById = new Map<string, string>();
+  for (const m of plateSetupInner.matchAll(/<fluor\s[^>]*\/?>/g)) {
+    const id = /fluorId="([^"]*)"/.exec(m[0])?.[1];
+    const name = /fluorName="([^"]*)"/.exec(m[0])?.[1];
+    if (id && name) nameById.set(id, unescapeXml(name));
+  }
+  if (nameById.size === 0) return undefined;
+
+  const out = new Map<string, number>();
+  for (const m of params.inner.matchAll(/<fluorDataAnalysisParam\s[^>]*fluorId="([^"]*)"[\s\S]*?<\/fluorDataAnalysisParam>/g)) {
+    const name = nameById.get(m[1]!);
+    if (!name) continue;
+    const el = m[0];
+    if (!/autoCalculateThreshold="False"/i.test(el)) continue;
+    const value = Number(/thresholdOverrideValue="([^"]*)"/.exec(el)?.[1]);
+    if (Number.isFinite(value)) out.set(name, value);
+  }
+  return out.size > 0 ? out : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Well factors: <wellFactorsCollection><WellFactorsCollection>…
+// ---------------------------------------------------------------------------
+
+/**
+ * Decode one `<WellFactors>` element — `<Ch0>…<ChN>`, each holding a `<PAr>` of `;`-separated
+ * per-well floats — into `[channel][well]`. Returns undefined when no channel row is present.
+ */
+function parseWellFactorsElement(inner: string, channelCount: number): number[][] | undefined {
+  const rows: number[][] = [];
+  for (let channel = 0; channel < channelCount; channel++) {
+    const chEl = findElement(inner, `Ch${channel}`);
+    const par = chEl ? findElement(chEl.inner, "PAr") : undefined;
+    if (!par) return undefined;
+    rows.push(par.inner.split(";").map(Number));
+  }
+  return rows.length > 0 ? rows : undefined;
+}
+
+/**
+ * Decode `<wellFactorsCollection>` into {@link WellFactors} — the per-well gain divisors
+ * `calibration.md` §4.1 applies. Which of the two saved sets is active is determined by the
+ * plate's scan pattern (`scanMode`), not a save-flag preference: `AllChannelsScan` (the
+ * step-and-repeat mode) selects `SnrWF`, any other scan mode selects `FlyoverWF`. The header's
+ * `snrSaved`/`flyovrSaved` flags then gate whether the selected set was actually recorded; a run
+ * where it wasn't (the committed sample's case, where the header notes the set was synthesized
+ * during persistence loading and every factor is exactly `1`) gets no active set, so no gain
+ * correction is applied at all.
+ */
+function decodeWellFactors(el: XmlElement, scanMode: string | undefined): WellFactors | undefined {
+  const coll = findElement(el.inner, "WellFactorsCollection");
+  if (!coll) return undefined;
+
+  const hdrWrapper = findElement(coll.inner, "WFHeader");
+  const hdr = hdrWrapper ? findElement(hdrWrapper.inner, "WellFactorsHeader") : undefined;
+  const headerText = hdr?.inner ?? "";
+  const channelCount = Number(firstTagText(headerText, "Channels") ?? CHANNELS) || CHANNELS;
+  const wellCount =
+    Number(firstTagText(headerText, "Wells") ?? WELLS_PER_CHANNEL) || WELLS_PER_CHANNEL;
+  // .NET serializes booleans as "True"/"False" here, not "true"/"1".
+  const flag = (name: string): boolean =>
+    (firstTagText(headerText, name) ?? "").trim().toLowerCase() === "true";
+
+  const readSet = (wrapperName: string): number[][] | undefined => {
+    const wrapper = findElement(coll.inner, wrapperName);
+    const wf = wrapper ? findElement(wrapper.inner, "WellFactors") : undefined;
+    return wf ? parseWellFactorsElement(wf.inner, channelCount) : undefined;
+  };
+
+  const snr = flag("snrSaved") ? readSet("SnrWF") : undefined;
+  const flyover = flag("flyovrSaved") ? readSet("FlyoverWF") : undefined;
+  const active = scanMode === "AllChannelsScan" ? snr : flyover;
+
+  return {
+    channelCount,
+    wellCount,
+    source: unescapeXml(firstTagText(headerText, "user") ?? "") || undefined,
+    snr,
+    flyover,
+    active,
+    get(row: number, col: number): number[] | undefined {
+      if (!active) return undefined;
+      const well = row * COLUMNS + col;
+      return active.map((channel) => channel[well] ?? 1);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Empty archive — a `.pcrd` has no inner files. Kept as a real `ArchiveAccess` (rather than
+// making `Zpcr.archive` optional, which would widen the shared interface) so a `.pcrd`-derived
+// `Zpcr` still satisfies the same public shape a `.zpcr` does; every accessor just reports
+// there's nothing here. See the module doc comment for where the real document content is.
+// ---------------------------------------------------------------------------
+
+const EMPTY_ARCHIVE_MESSAGE =
+  ".pcrd has no real archive entries — see Pcrd.xml / the app's .pcrd document view";
+
+const EMPTY_ARCHIVE: ArchiveAccess = {
+  entries: [],
+  bytes: () => {
+    throw new Error(EMPTY_ARCHIVE_MESSAGE);
+  },
+  text: () => {
+    throw new Error(EMPTY_ARCHIVE_MESSAGE);
+  },
+  hexDump: () => {
+    throw new Error(EMPTY_ARCHIVE_MESSAGE);
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a `.pcrd` file: decode the ZIP container, decrypt and inflate the entry, and parse
+ * the `<experimentalData2>` XML into a {@link Zpcr} — the same shape `parseZpcr` produces
+ * from a `.zpcr` archive.
+ *
+ * The container metadata is always returned. When the entry is encrypted and no password is
+ * supplied, `needsPassword` is set (nothing is attempted) — the same fixed password used for
+ * `.pltd`/`.prcl` (see `pltd.md` §2). If decryption/inflate fails, {@link Pcrd.error} is set
+ * instead.
+ */
+export function parsePcrd(bytes: Uint8Array, options: PcrdOptions = {}): Pcrd {
+  const entry = parseSingleEntryZip(bytes);
+  const container: PcrdContainer = {
+    innerName: entry.name,
+    compressionMethod: entry.method,
+    encrypted: entry.encrypted,
+    crc32: entry.crc32,
+    compressedSize: entry.compressedSize,
+    uncompressedSize: entry.uncompressedSize,
+  };
+
+  if (entry.encrypted && !options.password) {
+    return { container, needsPassword: true };
+  }
+
+  try {
+    const compressed = entry.encrypted
+      ? zipCryptoDecrypt(entry.data, options.password as string)
+      : entry.data;
+
+    let inflated: Uint8Array;
+    if (entry.method === 8 || entry.method === 9) {
+      inflated = inflateRaw(compressed, entry.uncompressedSize, entry.method === 9);
+    } else if (entry.method === 0) {
+      inflated = compressed;
+    } else {
+      throw new Error(`Unsupported ZIP compression method ${entry.method}`);
+    }
+
+    const xml = textDecoder.decode(stripBomBytes(inflated));
+    const docStart = xml.indexOf("<experimentalData2");
+    if (docStart < 0) throw new Error("Not a .pcrd payload: missing <experimentalData2>");
+    // No wrapper needed: <experimentalData2> is already the document's outermost element, so
+    // splitElements sees it as a single depth-0 child of the (unwritten) document root.
+    const rootEl = splitElements(xml.slice(docStart)).find(
+      (e) => e.name.toLowerCase() === "experimentaldata2",
+    );
+    if (!rootEl) throw new Error("Not a .pcrd payload: malformed <experimentalData2>");
+    const children = splitElements(rootEl.inner);
+
+    const zpcr = buildZpcr(children);
+    return { container, xml, zpcr };
+  } catch (e) {
+    return { container, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+function buildZpcr(root: XmlElement[]): Zpcr {
+  const byLower = new Map<string, XmlElement>();
+  for (const el of root) byLower.set(el.name.toLowerCase(), el);
+
+  const plateSetup2 = byLower.get("platesetup2");
+  const protocol2 = byLower.get("protocol2");
+  const protocolRunInfo = byLower.get("protocolruninfo");
+  const runInfoEl = protocolRunInfo ? findElement(protocolRunInfo.inner, "RunInfo") : undefined;
+  const runInfoXml = runInfoEl ? `<RunInfo>${runInfoEl.inner}</RunInfo>` : undefined;
+  const metadata: RunMetadata = runInfoXml
+    ? parseRunInfo(runInfoXml)
+    : parseRunInfo("<RunInfo></RunInfo>");
+
+  const runData = byLower.get("rundata");
+  const plateReadVector = runData ? findElement(runData.inner, "plateReadDataVector") : undefined;
+  const plateReadWrappers = plateReadVector ? splitElements(plateReadVector.inner) : [];
+
+  const reads: PlateRead[] = plateReadWrappers.map((wrapper, i) => {
+    // wrapper is <plateRead>…</plateRead>; its one child is <PlateRead V="1">…</PlateRead>.
+    const inner = splitElements(wrapper.inner)[0];
+    const index = i + 1;
+    return inner
+      ? decodePcrdPlateRead(inner, index)
+      : {
+          index,
+          cycle: 0,
+          step: 0,
+          channelMask: 0,
+          fileName: `plateRead[${index}]`,
+          temps: [],
+          leds: [],
+          fields: [],
+          wells: buildWellTable(missingReading),
+          dark: Array.from({ length: CHANNELS }, missingReading),
+        };
+  });
+
+  const plate: PlateDefinition | undefined = plateSetup2
+    ? parsePlatesetup2(`<plateSetup2${attrsToString(plateSetup2.attrs)}>${plateSetup2.inner}</plateSetup2>`)
+    : undefined;
+
+  const plates = (): PltdEntry[] =>
+    plateSetup2 && plate
+      ? [
+          {
+            name: "plateSetup2",
+            pltd: {
+              container: {
+                innerName: "plateSetup2 (embedded in .pcrd)",
+                compressionMethod: 8,
+                encrypted: false,
+                crc32: 0,
+                compressedSize: 0,
+                uncompressedSize: plateSetup2.inner.length,
+              },
+              plate,
+              xml: plateSetup2.inner,
+            },
+          },
+        ]
+      : [];
+
+  const runDefinition = protocol2?.attrs.runDefinition;
+  const protocolText = runDefinition ? unescapeXml(runDefinition) : "";
+
+  const persistedThresholds = decodePersistedThresholds(
+    byLower.get("dataanalysisparameters"),
+    plateSetup2?.inner,
+  );
+
+  const wellFactorsEl = byLower.get("wellfactorscollection");
+  const wellFactors = wellFactorsEl ? decodeWellFactors(wellFactorsEl, plate?.scanMode) : undefined;
+
+  const calibrations = (): DcalEntry[] =>
+    runData ? decodeCalibrationCollection(runData.inner) : [];
+
+  // Dye → optical channel from `calibrationCollection`, cached: decoding it is the same work
+  // `calibrations()` does (typically 28 entries), and `Zpcr.channelForDye` is asked per fluor.
+  let dyeLookup: ((dye: string) => number | undefined) | undefined;
+  const channelForDye = (dye: string): number | undefined => {
+    if (!dyeLookup) dyeLookup = dyeChannelLookup(calibrations().map((e) => e.dcal));
+    return dyeLookup(dye);
+  };
+
+  const factoryRefCal = () =>
+    parseFactoryRefRowCal(
+      metadata.raw["FactoryRefRowCal"] ?? "",
+      metadata.channelCount,
+      metadata.numberPlateColumns,
+    );
+
+  // The document's own Data-Window baseline (`baselineBeginRepeat`/`baselineEndRepeat`), when it
+  // declares one. Read here rather than in `decodePersistedThresholds` because it is a *run-level*
+  // fact this library's analysis can honour, not a per-fluorophore threshold.
+  const declaredBaselineWindow = readDeclaredBaselineWindow(byLower.get("dataanalysisparameters"));
+
+  return {
+    metadata,
+    reads,
+    archive: EMPTY_ARCHIVE,
+    protocolText,
+    declaredBaselineWindow,
+    // The embedded `protocol2` element is the same schema a real `.prcl`'s XML payload uses
+    // (prcl.ts's `parseProtocol2`, reused here) — full name + settings + step list, no password
+    // needed, unlike `protocols()` below.
+    protocol: (): ProtocolDocument | undefined =>
+      protocol2
+        ? parseProtocol2(`<protocol2${attrsToString(protocol2.attrs)}>${protocol2.inner}</protocol2>`)
+        : undefined,
+    curves: (options?: CurveOptions) => toCurves(reads, options),
+    darkCurves: (step?: number) => toDarkCurves(reads, step),
+    temperatureCurves: (step?: number) => toTemperatureCurves(reads, step),
+    ledCurves: (step?: number) => toLedCurves(reads, step),
+    steps: () => toSteps(reads),
+    channels: () => toChannels(reads),
+    plates,
+    // A .pcrd's protocol2 subtree is exposed only via protocolText above (and, in the app,
+    // the .pcrd document view's raw XML) -- not typed-decoded into a PrclEntry the way a
+    // .zpcr's real .prcl archive entries are, since there's no separate password-gated file
+    // here to model.
+    protocols: (): PrclEntry[] => [],
+    // A `.pcrd` carries no `.alf` at all — the saved-experiment XML has `RunInfo`/`runlog` but
+    // not the report text (`alf.md` §1).
+    runReports: () => [],
+    calibrations,
+    channelForDye,
+    wellFactors,
+    persistedThresholds,
+    factoryRefCal,
+    refCalComparison: () => compareRefToCal(reads, factoryRefCal()),
+  };
+}
+
+function attrsToString(attrs: Record<string, string>): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return Object.entries(attrs)
+    .map(([k, v]) => ` ${k}="${esc(v)}"`)
+    .join("");
+}
+
+/** True for `.pcrd` (CFX Manager saved-experiment) file names. */
+export function isPcrdName(name: string): boolean {
+  return /\.pcrd$/i.test(name);
+}
+
+/**
+ * Convenience for browser uploads: read a `Blob`/`File` and parse it. Mirrors
+ * {@link zpcrFromBlob} — `Blob` is available in both modern browsers and Node.
+ */
+export async function pcrdFromBlob(blob: Blob, options?: PcrdOptions): Promise<Pcrd> {
+  return parsePcrd(new Uint8Array(await blob.arrayBuffer()), options);
+}

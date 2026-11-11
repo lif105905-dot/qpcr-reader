@@ -1,0 +1,173 @@
+qPCR 读取器（Bio-Rad CFX .pcrd / .zpcr）使用说明
+=====================================================
+
+〇、名字与图标
+  · 应用名（桌面图标、程序坞、菜单栏）是英文「qPCR Reader」，界面是中文
+  · 桌面上只有一个 qPCR Reader.app，双击即可；/Applications 里同名的那份是启动器，
+    真程序在 ~/Library/Application Support/qPCR Reader/qPCR.app
+
+一、怎么打开
+  双击桌面上的「qPCR Reader.app」图标  ← 最省事，和普通 app 一样（不弹终端窗口）
+  · 桌面上那个图标是软链接，指向 /Applications/qPCR Reader.app
+  · /Applications/qPCR Reader.app 只是一个「启动器」（shell 脚本包），
+    它去启动 ~/Library/Application Support/qPCR Reader/qPCR.app 里的真程序
+  · 为什么要拆成两层：这台机器（macOS 15）拒绝经 LaunchServices 启动的
+    ad-hoc 签名 Electron 包（双击后进程立刻退出、什么都不发生）。
+    启动器不是 Electron，不受这条限制，所以由它转手启动真程序。
+  · ⚠️ 所以：更新版本时**只能**把新包 ditto 到
+    ~/Library/Application Support/qPCR Reader/qPCR.app，
+    **绝不能**覆盖到 /Applications/qPCR Reader.app —— 那会把启动器盖掉，
+    双击就没反应、或者打开的仍是旧版本。重新打包.command 已经固定按正确位置装。
+  · 也可以把 .pcrd 文件拖到桌面图标上，它会带着文件启动
+
+二、怎么用
+  1. 界面全中文，密码已内置，.pcrd 直接就能解开，不用再输
+  2. 把 .pcrd / .zpcr 拖进窗口；或点右上角「打开文件」；或用菜单「文件 → 打开文件…」(⌘O)
+  3. 左侧「读板步骤」可在扩增（0 · 41 循环）与熔解（熔解 · 71）之间切换
+  4. 「曲线」视图：显示方式（通道/荧光/靶标/表格）、值（相对 ΔRFU / 绝对 RFU）、
+     坐标（线性/对数）、Cq 范围；熔解模式看 −dF/dT 与 Tm，可导出 CSV，
+     也可把熔解曲线导出成 TIFF 图片（透明背景，直接贴进 PPT / 论文）
+
+三、为什么不能直接双击 qPCR Reader.app（已用启动器绕过）
+  本机 macOS 15 的 AMFI 拒绝把 ad-hoc 签名应用经 LaunchServices 启动，日志里是
+    amfid: .../Mantle.framework/.../Mantle not valid: AppleMobileFileIntegrityError Code=-423
+    "The file is adhoc signed or signed by an unknown certificate chain"
+  这次把能想到的路都试过，都不行：
+    · codesign 自签（inside-out + entitlements，含 allow-jit / disable-library-validation）：验签通过，启动仍被拒
+    · 去掉 hardened runtime（--options runtime）：仍被拒
+    · 清 xattr（FinderInfo / fileprovider / quarantine）、ditto --noextattr、xattr -cr：provenance 受保护删不掉，仍被拒
+    · 换位置（/tmp、~/Applications）、lsregister -f 重新注册、open -n：仍被拒
+    · 造一张本地自签根证书、导入钥匙串并设为信任代码签名、用它重签全包：签名 Authority 已变成它，
+      但 AMFI 仍报「unknown certificate chain」（AMFI 只认 Apple 签发的链）
+    · 直接 open 未改动过的官方 Electron.app：同样起不来 → 是这台机器的策略，不是本应用的问题
+  可行做法：
+    A. 用「qPCR 读取器.app」启动器（当前方案，AppleScript applet，双击即开）
+    B. 有 Apple 开发者账号时用 Developer ID 证书重签并公证（99 美元/年，一劳永逸）
+    C. sudo spctl --global-disable 关掉 Gatekeeper（影响整机安全，不推荐）
+
+四、现在能看到什么
+  顶部只有三个主标签：文件 / 定量数据 / 熔解数据，其余都收进「更多 ⋯」
+
+  定量数据  扩增曲线 + Cq 标记 + 96 孔选择 + 表格（Cq 明细）；分析开关在左侧栏
+  熔解数据  熔解曲线（−dF/dT）与 Tm 表，可导出 CSV / TIFF
+  文件      浏览器里所有已打开的文件
+
+  「更多 ⋯」菜单（需要时再展开）：
+  总览    运行信息、热循环程序、模块/基座序列号、通道与循环数
+  程序    热循环程序（中文步骤：在 95 °C 保持 0:30、返回第 1 步 — 共 41 轮、熔解段…）
+  板      96 孔板图（本文件里没有板设，所以显示「未知」）
+  参考    参考列与漂移
+  校准    .Dcal 校准（本文件不含，标签为禁用状态）
+  原始    解密后的 XML / 各二进制层的逐字段解码
+  仪器    直连 CFX 的仪器面板（本机一般用不到，接 USB 时才用）
+
+四·五、分析相关的开关（2026-11-10 新增，对着 CFX 原软件加的）
+
+  阈值（Cq 用）
+    默认倍数 87×（阈值 = 87 × 全板基线噪声中位数）。本机用 2026-11-09 这块板 CFX 的 74 个
+    Cq 做过拟合：87× 时平均差 0.31 个循环、65/74 孔在 0.5 个循环内（原来 20× 是 1.29）。
+    「阈值」区可以按染料改倍数；如果你手上有 CFX 报的同一条曲线的 Cq 想对齐，直接在曲线
+    上拖动 Cq 圆点（或在该行输入阈值）就能把这条曲线钉到 CFX 的位置。
+  曲线视图左侧「坐标」   线性 / 对数，已提到最上面，一眼就能切
+            对数视图按 CFX 的做法：窗口取 2 个十倍程（本批数据 100 – 10 000，按数据最高值向外
+            取整到整十倍程），基线段（几十 RFU 的噪声）在窗口下方直接裁掉，曲线从真正起峰
+            的循环才进来，所以和 CFX 的 Log Scale 一样干净。
+  横轴：从 0 起，每 10 个循环一个刻度与竖网格（和 CFX 一致）；纵轴：对数时只标整十倍程。
+  「基线」折叠区（在曲线视图左侧）
+    · 方式：线性归一化（默认，= CFX 的 Baseline Subtracted）/ 减常数（区域均值）/ 无
+    · 循环：手填基线窗口的起止循环，两框都填好才生效（只填一个不会跳来跳去）；
+            想看 CFX 原来用的窗口，把两个框都清空 = 自动（本批 .pcrd 声明的是 2–9）；
+            改窗口 Cq 会立刻重算
+    · 漂移校正：在所选方式之上再减掉基线窗口内的线性漂移
+            （= CFX 的 Baseline Drift Correction；线性归一化本身已含漂移，故此时无变化）
+  「阈值」折叠区：自动阈值倍数、Cq 判定方法（单一阈值 / 对数起飞点 / 曲线拟合）、
+            每个染料与每个孔的阈值手填
+
+五、精度说明（重要）
+  · .pcrd 里不保存 Ct/Cq 结果，CFX 打开时才现算；自动阈值也不会写进文件
+  · 本工具默认已照抄 CFX 的自动阈值算法（详见五·五），实测：
+      2026-08-31 板 96 孔平均差 0.077 循环、最大 0.49、全部 ≤0.5
+      2025-11-09 那块弱扩增板退回噪声法后平均差 0.37
+    熔解曲线与 Tm 完全来自原始数据，不受阈值影响
+  · 需要 Bio-Rad 官方出的数字时，仍以 CFX 的导出表为准
+
+五·五、自动阈值照抄 CFX（2026-11 起）
+  CFX 的自动阈值不是「噪声 × 倍数」。反编译 Bio-Rad 自己的
+  BioRad.PCR.Analysis.dll 可以看到：
+      bl.ThresholdXLoc = pd.CalcInputLeftMaxPosCurvatureCycle(peak);
+      bl.Threshold    = pd.EvaluateFunction(y, bl.ThresholdXLoc);
+  即：取曲线上升最陡处（二阶导数最大）那一环的荧光值。本工具现在
+  默认用这条规则（界面上「自动阈值方式 = 曲率（与 CFX 一致）」）：
+      2026-08-31 板算出的阈值 984，CFX 界面显示 1019.16
+  曲线在跑完时还没进入平台（弱扩增板）时曲率法不适用，程序自动退回
+  噪声法，并改用库默认倍数 20（健康板用的是 87）——2025-11-09 那块
+  弱板因此从 2.92 循环降到 0.37 循环。
+  想手动覆盖：阈值区里每个染料、每个孔都能直接填数字。
+
+五·六、把 Cq 排成板图、导出 Cq
+  「定量数据」页把显示切到「表格」后，表格上方有两个新东西：
+  · 排列：板图 / 明细表
+      板图 = 和原版一样的排列，行 A–H、列 1–12，每格一个 Cq；
+             一个孔有多个靶标时逐行写、按通道上色；没扩增的孔显示「—」。
+      明细表 = 原来那张可排序的清单（样品、靶标、基线、阈值、ΔRFU…）。
+  · 导出 Cq：输出「板图 CSV」——第一行是 1…12，之后每行以行字母开头，
+    直接粘进 Excel 就落在 8×12 的格子里。一块板有多个靶标时按靶标分块，
+    每块前面有一行 Target,名字；整块都没有数值的靶标会被跳过。
+  · 这个排列只影响"怎么看"，不改任何 Cq。
+
+五·七、给指定的曲线换个颜色（用「选色」按钮，不用记快捷键）
+  1) 左侧「孔」区块右上角点「选色」——进入选色模式（按钮变成亮的）。
+  2) 在孔位网格里点一个孔，或者按住拖动拉一片，被选中的孔出现白圈。
+     绘图区左上角会出现色带：N 个孔已选中 + 8 个颜色 + 恢复默认 + 完成。
+  3) 点一个颜色，这些孔的曲线立刻变色（线上的 Cq 圈、基线叠加一起变）。
+  · 恢复默认：把选中的孔交还给通道配色。
+  · 完成：退出选色模式（颜色保留，白圈消失）。
+  · 不点「选色」时，点孔还是原来的意思：显示/隐藏那条曲线。
+    想临时选一批也可以用 Shift + 点孔，效果相同。
+  · 选中的孔和隐藏的孔是两回事：隐藏不影响已选的颜色，上色也不改变谁显示。
+  · 颜色存在文件记录里，重开这个文件还在；不影响任何计算结果。
+  · 颜色是"按孔"记的，所以定量数据页和熔解数据页共用同一套颜色：
+    在定量数据里把某几个孔涂成洋红，切到熔解数据，这几条熔解曲线也是洋红。
+
+五·八、界面按"只用 SYBR"简化了
+  · 只有一种染料/一个通道时，左侧不再显示「荧光通道」选择（省掉一个只有一行的区块）。
+    多染料的板（比如同时有 FAM / Cy5 / Texas Red）仍会显示。
+  · 「温度（右轴）」和「LED 电流（右轴）」两个区块已去掉，右侧不再画第二条轴。
+    原始数据里这些字段还在（「原始」页能查到），只是不再作为曲线画出来。
+
+五·十、纵坐标从 0 起（跟原版一致）
+  · 定量曲线图的纵轴固定从 0 开始，顶端比最高曲线高一点——和 CFX 的画法一样。
+    这样曲线能占满整个画布；以前自动适配会把基线噪声的负值也算进去，把曲线压扁。
+  · 低于 0 的点不画（被画布裁掉），和 CFX 一样。
+  · 对数模式下 0 画不出来，窗口按数据自动定：顶边 = 最高曲线 +6%，底边 = 往下两个十倍程；
+    但「相对」和「绝对」不同——相对视图从 0 附近起，底边固定压到顶边/100（把基线噪声裁掉，和 CFX 一样）；
+    绝对视图的基线本身就有几千 RFU，底边跟着数据走，避免把曲线压到顶上。
+  · 熔解曲线图同样从 0 起。
+  · 「更多 ⋯ → 参考」页的 ΔRFU / 漂移% 是有正有负的量，那里仍按数据范围自动适配。
+
+五·九、把放大曲线图导成图片
+  · 定量数据页右下（CSV 按钮旁边）有「TIFF」按钮：把当前这张放大曲线图存成
+    一张 8 英寸宽、约 300 dpi、透明背景、深色坐标轴的图片，直接可以贴进 Word / PPT / 论文。
+  · 图里包含：曲线、坐标轴、门槛虚线（多条靶标门槛不一致时不画线，和屏幕一致）、
+    每条曲线的 Cq 圈。导出的是"这张图"，不是你屏幕的截图。
+  · 熔解数据页的 TIFF 按钮同理，导出熔解曲线图。
+  · 文件名：<上机文件名>_amplification.tif（熔解是 _melt.tif），和同名 CSV 放一起。
+  · 表格模式下没有图可导，所以按钮只在曲线图显示时出现。
+
+六、改代码后怎么重新打包
+  cd /Users/lijiehui/Documents/qpcr-tool/zpcrweb
+  npm run build -w @zpcrweb/web                       # 网页（含中文化插件）
+  cd apps/desktop
+  /usr/local/bin/node ../../node_modules/electron-builder/cli.js --mac --dir
+  pkill -f "Contents/MacOS/qPCR Reader"
+  rm -rf "/Applications/qPCR Reader.app"
+  ditto --noextattr --norsrc "out/mac-arm64/qPCR Reader.app" "/Applications/qPCR Reader.app"
+  注意：不要去改 Info.plist 的 CFBundleName —— Electron 按它去找
+  「<CFBundleName> Helper.app」，改名就会报 FATAL: Unable to find helper app。
+  中文化词条在 apps/web/i18n/zh-CN.json，插件 apps/web/i18n/plugin.mjs。
+
+七、其它
+  · 全部解析在本机完成，不联网、不上传
+  · 许可证 GPL-3.0-or-later：给实验室其他人时必须同时提供源码和 LICENSE
+  · 源码在 /Users/lijiehui/Documents/qpcr-tool/zpcrweb
+  · 启动诊断日志在 /tmp/qpcr-main.log（排查启动问题用，可随时删）

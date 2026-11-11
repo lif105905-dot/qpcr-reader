@@ -1,0 +1,469 @@
+/**
+ * The state behind the Files view's folder trees: which nodes are open, what each open node turned
+ * out to contain, and when to go and look again.
+ *
+ * **Nothing is read until a node is opened.** A granted folder can be an entire lab archive, so
+ * there is no recursive walk anywhere here — {@link listDirectory} reads one directory level, and
+ * this hook calls it exactly once per node the user opens (or that the app opens on their behalf).
+ * A folder with ten thousand files in a hundred subdirectories therefore costs one `entries()` call
+ * to show, and nothing at all until the Files view is looked at.
+ *
+ * **What opens by itself comes from the catalog, not from disk.** On first sight of a folder the
+ * hook opens the ancestors of the disk-backed files already in the catalog, so the files someone is
+ * working on are in front of them and every other branch stays shut and unread. Deriving that from
+ * the catalog — which is in memory already — is what keeps the promise above: the app never has to
+ * search the disk to find out where to look.
+ *
+ * The cost of all this is that a file newly written into a folder doesn't announce itself. The tree
+ * re-reads when the Files view is opened, when a node is expanded, and when the folder's ↻ is
+ * pressed. Files that are *loaded* do refresh by themselves — those are watched individually
+ * (`diskFolders.ts`), which is a per-file cost the app can afford and a per-tree one it cannot.
+ *
+ * **Two of the folders are not on the disk.** A GitHub repository the app has been pointed at
+ * (`state/githubRepos.ts`) lists exactly like a folder — one directory level at a time, over the
+ * network instead of over a directory handle — and `samples` is the app's own, bundled at build
+ * time (`lib/samples.ts`). Both are here rather than in sections of their own so that one component
+ * draws every folder and the three cannot drift apart. What differs is per folder and small: a
+ * repository has no permission to grant, and the bundled folder is always last, cannot be removed,
+ * has nothing to re-read and is flat. Neither needs the File System Access API, so both are present
+ * — and are the whole pane — on a browser where {@link DiskTree.supported} is false.
+ */
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  addFolder as pickFolder,
+  folderPermission,
+  invalidateListings,
+  listDirectory,
+  listFolders,
+  removeFolder,
+  requestFolderPermission,
+  retryFailedWatches,
+  supportsDiskFolders,
+  type DiskEntry,
+} from "./diskFolders";
+import type { DiskSource } from "./db";
+import {
+  invalidateGithubListings,
+  isGithubFolder,
+  listGithubDirectory,
+  listGithubFolders,
+  removeGithubRepo,
+} from "./githubRepos";
+import { SAMPLE_FILES_LIST, SAMPLES_LABEL } from "../lib/samples";
+
+/** Where a folder's files come from: the user's disk, a GitHub repository the app has been pointed
+ * at (`state/githubRepos.ts`), or the app's own bundle (`lib/samples.ts`). */
+export type FolderKind = "disk" | "github" | "builtin";
+
+/** One folder as the Files view needs it — a granted one on disk, a repository, or the bundled
+ * `samples`. */
+export interface FolderView {
+  label: string;
+  /** Always `granted` for a folder that isn't on disk: there is no handle to ask about. A
+   * repository that can't be read fails its *listing* instead, with GitHub's reason. */
+  permission: PermissionState;
+  kind: FolderKind;
+}
+
+/** The bundled samples as a directory listing, so the same pane draws them as a disk folder's.
+ * There are no subdirectories: `samples/` is flat, and the plugin reads one level. */
+const sampleEntries = (): DiskEntry[] =>
+  SAMPLE_FILES_LIST.map((s) => ({
+    name: s.name,
+    kind: "file" as const,
+    size: s.size,
+    lastModified: s.lastModified,
+  }));
+
+/**
+ * The bundled folder, which always keeps the name `samples` — a granted folder picked under that
+ * name gets the `(2)` (`diskFolders.ts`'s `addFolder`), so the label stays a constant here.
+ *
+ * Labels have to be unique because a label is an identity: the tree keys its nodes by it
+ * ({@link nodeKey}) and it is the first component of every file name in the folder, so two sections
+ * sharing one would share a listing, and the ✕ on one would be asking about the other.
+ */
+const samplesFolder: FolderView = {
+  label: SAMPLES_LABEL,
+  permission: "granted",
+  kind: "builtin",
+};
+
+/** What is known about one directory node, keyed by {@link nodeKey}. */
+export interface DiskNode {
+  entries: DiskEntry[] | null;
+  /** A listing in flight — the node is open but hasn't come back yet. */
+  pending: boolean;
+  /** Why the listing failed, if it did. Usually a lapsed permission or a deleted directory. */
+  error: string | null;
+}
+
+/** The identity of a directory node across all folders — the folder label and the path to it. */
+export function nodeKey(label: string, path: readonly string[]): string {
+  return JSON.stringify([label, ...path]);
+}
+
+export interface DiskTree {
+  /** Whether this browser can do folders at all; false hides every folder affordance. */
+  supported: boolean;
+  folders: FolderView[];
+  nodes: Map<string, DiskNode>;
+  open: ReadonlySet<string>;
+  toggle: (label: string, path: readonly string[]) => void;
+  /**
+   * The directory whose files are showing, per folder. Each folder keeps its own, so switching
+   * between two folders doesn't lose your place in either. Absent means the folder's own root.
+   */
+  selected: ReadonlyMap<string, readonly string[]>;
+  /** Which folder the file column is showing — one at a time, since there is one file column for
+   * the whole tree. Null before any folder has been picked, and after the picked one is removed. */
+  activeFolder: string | null;
+  /** Show this directory's files. Lists it if it hasn't been read, exactly as expanding does. */
+  select: (label: string, path: readonly string[]) => void;
+  /** Folders whose body is hidden. Stacked folders would otherwise push each other off the pane. */
+  collapsed: ReadonlySet<string>;
+  toggleFolder: (label: string) => void;
+  /** Re-read everything currently open in this folder. */
+  refresh: (label: string) => void;
+  /**
+   * Ask for a folder and add it. Must be called from a user gesture.
+   *
+   * `reserved` is the names already showing at the top of the Files view — the open files — so a
+   * picked folder never lands under a name that list already uses. The new folder gets a `(2)`
+   * rather than the collision.
+   */
+  add: (reserved?: readonly string[]) => Promise<void>;
+  /** Ask for a lapsed folder's permission back, and re-read every folder once it is answered —
+   * the browser grants for the origin, not for the one handle asked. Must be called from a user
+   * gesture. */
+  grant: (label: string) => Promise<void>;
+  remove: (label: string) => Promise<void>;
+  error: string | null;
+}
+
+export function useDiskTree(
+  /** Every disk-backed file in the catalog, loaded or not — what the initial expansion is derived
+   * from. Only the loaded ones open their ancestors; a released file is in the catalog but isn't
+   * what anybody is looking at. */
+  loadedSources: DiskSource[],
+  /** True while the Files view is on screen. Opening it is the app's "look at the disk again"
+   * moment: cached listings are dropped and watches that had nothing to attach to try again. */
+  active: boolean,
+  /**
+   * Called when a folder's permission is granted back — which, since the browser grants for the
+   * origin rather than for the one handle asked, means every folder is readable again. The files
+   * the app has open in any of them have been unreadable until this moment, so this is what makes
+   * them come back without the user having to click each one (`ZpcrStore.retryUnread`).
+   */
+  onGranted?: () => void,
+): DiskTree {
+  const supported = supportsDiskFolders();
+  const [folders, setFolders] = useState<FolderView[]>([]);
+  const [nodes, setNodes] = useState<Map<string, DiskNode>>(new Map());
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const [selected, setSelected] = useState<ReadonlyMap<string, readonly string[]>>(new Map());
+  const [activeFolder, setActiveFolder] = useState<string | null>(null);
+  /** Whether the user has picked a folder themselves. Until they have, a folder holding files that
+   * are already open outranks whatever happened to be listed first — the loaded files arrive from
+   * IndexedDB after the folder list does, so the better answer is only knowable later. */
+  const picked = useRef(false);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+  /**
+   * What has already been auto-opened, so re-rendering doesn't re-open a branch the user has since
+   * closed. Tracked per folder (its root) *and* per file (its ancestors) rather than per folder
+   * alone: the loaded files arrive from IndexedDB after the folder list does, so a per-folder mark
+   * would be set while there was nothing yet to open, and the branch holding the file someone was
+   * working on would never open at all on a reload.
+   */
+  const expanded = useRef(new Set<string>());
+
+  const load = useCallback(async (label: string, path: readonly string[]) => {
+    const key = nodeKey(label, path);
+    // The bundled folder is already in memory and is flat, so there is nothing to read and no
+    // pending state to show: its root is the manifest, and any deeper path doesn't exist. Safe as
+    // a label comparison because no granted folder can hold that label — see `samplesFolder`.
+    if (label === SAMPLES_LABEL) {
+      const entries = path.length === 0 ? sampleEntries() : [];
+      setNodes((prev) => new Map(prev).set(key, { entries, pending: false, error: null }));
+      return;
+    }
+    setNodes((prev) => {
+      const next = new Map(prev);
+      next.set(key, { entries: prev.get(key)?.entries ?? null, pending: true, error: null });
+      return next;
+    });
+    try {
+      // A repository is listed over the network and a disk folder over a directory handle; both
+      // answer the same one-directory-level question, so the node knows nothing about which it is.
+      const entries = isGithubFolder(label)
+        ? await listGithubDirectory(label, path)
+        : await listDirectory(label, path);
+      setNodes((prev) => new Map(prev).set(key, { entries, pending: false, error: null }));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setNodes((prev) => new Map(prev).set(key, { entries: null, pending: false, error: message }));
+    }
+  }, []);
+
+  /** Every directory node currently on screen: the expanded ones plus each folder's selected one.
+   * What a re-read has to cover. */
+  const liveNodes = useCallback(
+    () => new Set([...open, ...[...selected].map(([label, path]) => nodeKey(label, path))]),
+    [open, selected],
+  );
+
+  const readFolders = useCallback(async () => {
+    // Granted folders first, then the repositories the app has been pointed at, then `samples`
+    // last always — so the app's own files never sit above the user's — which is also the whole
+    // list on a browser that can't do disk folders at all.
+    const stored = supported ? await listFolders() : [];
+    setFolders([
+      ...(await Promise.all(
+        stored.map(async (f) => ({
+          label: f.label,
+          permission: await folderPermission(f.label),
+          kind: "disk" as const,
+        })),
+      )),
+      ...listGithubFolders().map((f) => ({
+        label: f.label,
+        // Nothing to ask a browser for: a public repository needs no permission and a private one
+        // needs a token, which is a failed listing rather than a locked folder.
+        permission: "granted" as PermissionState,
+        kind: "github" as const,
+      })),
+      samplesFolder,
+    ]);
+  }, [supported]);
+
+  useEffect(() => {
+    void readFolders();
+  }, [readFolders]);
+
+  // Opening the Files view is the only routine chance the app gets to notice work done on disk
+  // while it wasn't looking, since it deliberately doesn't watch directories.
+  useEffect(() => {
+    if (!active) return;
+    // Not gated on `supported`: a repository is listed over the network, so the Files view is a
+    // "look again" moment even on a browser that can't be granted a folder on disk at all.
+    if (supported) {
+      invalidateListings();
+      retryFailedWatches();
+    }
+    invalidateGithubListings();
+    void readFolders();
+    // The expanded nodes *and* the selected ones: a directory picked for the file pane isn't
+    // necessarily expanded in the tree, and it is the one whose contents are actually on screen.
+    for (const key of liveNodes()) {
+      const [label, ...path] = JSON.parse(key) as string[];
+      void load(label!, path);
+    }
+    // Deliberately only on becoming active: re-running as `open` grows would re-read every node
+    // on every expansion.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, supported]);
+
+  // A folder seen for the first time opens the branches holding the files already in use, and
+  // nothing else. Derived from the catalog, so no directory is read to work out where to look.
+  useEffect(() => {
+    const known = new Set(folders.map((f) => f.label));
+    const toOpen: string[] = [];
+    /** Where each folder's file pane should start out. */
+    const toSelect = new Map<string, readonly string[]>();
+    /** Which folder the one file column starts on, if the user hasn't picked: a folder already
+     * holding open files beats whatever happens to be first in the list. */
+    let firstSeen: string | null = null;
+    let holdingOpenFiles: string | null = null;
+    for (const folder of folders) {
+      const mark = `folder:${folder.label}`;
+      firstSeen ??= folder.label;
+      if (expanded.current.has(mark)) continue;
+      expanded.current.add(mark);
+      toOpen.push(nodeKey(folder.label, []));
+      toSelect.set(folder.label, []);
+    }
+    for (const source of loadedSources) {
+      if (!known.has(source.folder)) continue;
+      const mark = `file:${nodeKey(source.folder, source.path)}`;
+      if (expanded.current.has(mark)) continue;
+      expanded.current.add(mark);
+      // Every directory between the folder root and the file, but not the file itself.
+      for (let i = 1; i < source.path.length; i++) {
+        toOpen.push(nodeKey(source.folder, source.path.slice(0, i)));
+      }
+      // …and land the file pane on the directory that file is actually in, so the work in progress
+      // is what's showing rather than whatever happens to be at the top of the folder.
+      toSelect.set(source.folder, source.path.slice(0, -1));
+      holdingOpenFiles = source.folder;
+    }
+    // Where the file column starts — only until the user picks a folder themselves, after which
+    // this is their choice to keep and a folder list arriving late must not move it.
+    if (!picked.current) {
+      if (holdingOpenFiles) setActiveFolder(holdingOpenFiles);
+      else if (firstSeen) setActiveFolder((prev) => prev ?? firstSeen);
+    }
+    if (toOpen.length === 0) return;
+    setOpen((prev) => new Set([...prev, ...toOpen]));
+    setSelected((prev) => {
+      const next = new Map(prev);
+      for (const [label, path] of toSelect) next.set(label, path);
+      return next;
+    });
+    for (const key of new Set([...toOpen, ...[...toSelect].map(([l, p]) => nodeKey(l, p))])) {
+      const [label, ...path] = JSON.parse(key) as string[];
+      void load(label!, path);
+    }
+  }, [folders, loadedSources, load]);
+
+  const select = useCallback(
+    (label: string, path: readonly string[]) => {
+      picked.current = true;
+      setSelected((prev) => new Map(prev).set(label, path));
+      setActiveFolder(label);
+      void load(label, path);
+    },
+    [load],
+  );
+
+  const toggleFolder = useCallback((label: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  }, []);
+
+  const toggle = useCallback(
+    (label: string, path: readonly string[]) => {
+      const key = nodeKey(label, path);
+      setOpen((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else {
+          next.add(key);
+          void load(label, path);
+        }
+        return next;
+      });
+    },
+    [load],
+  );
+
+  const refresh = useCallback(
+    (label: string) => {
+      invalidateListings(label);
+      invalidateGithubListings(label);
+      retryFailedWatches();
+      void readFolders();
+      for (const key of liveNodes()) {
+        const [keyLabel, ...path] = JSON.parse(key) as string[];
+        if (keyLabel === label) void load(keyLabel, path);
+      }
+    },
+    [liveNodes, load, readFolders],
+  );
+
+  const add = useCallback(async (reserved?: readonly string[]) => {
+    try {
+      setError(null);
+      const folder = await pickFolder(reserved);
+      if (folder) {
+        // Picking a folder is asking to look in it, so the file column goes there — and counts as
+        // the user's own choice, which nothing later gets to override.
+        picked.current = true;
+        setActiveFolder(folder.label);
+        await readFolders();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [readFolders]);
+
+  /**
+   * Ask for a lapsed folder's permission back — and then re-read **everything**, not just that
+   * folder.
+   *
+   * One handle is asked, but the browser answers for the origin: Chrome's restore-permission
+   * prompt hands back access to every directory the site was granted before, so by the time this
+   * resolves the *other* folders are readable again too. Refreshing only the one whose button was
+   * clicked would leave the rest showing cached "needs permission" state that had stopped being
+   * true — and their open files wearing a read-error badge until something else happened to touch
+   * them. So every listing is dropped, every node on screen is re-read, and `onGranted`
+   * (`ZpcrStore.retryUnread`) reads back in every open file the app is holding but couldn't get at.
+   */
+  const grant = useCallback(
+    async (label: string) => {
+      try {
+        setError(null);
+        await requestFolderPermission(label);
+        invalidateListings();
+        retryFailedWatches();
+        await readFolders();
+        for (const key of liveNodes()) {
+          const [keyLabel, ...path] = JSON.parse(key) as string[];
+          void load(keyLabel!, path);
+        }
+        onGranted?.();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [readFolders, liveNodes, load, onGranted],
+  );
+
+  const remove = useCallback(
+    async (label: string) => {
+      // The bundled folder is part of the app; the UI offers no ✕ for it, and this is the
+      // backstop that keeps that true if some other caller ever asks.
+      if (label === SAMPLES_LABEL) return;
+      // Forgetting a repository is local and immediate — no handle to release, and the files
+      // already opened out of it are copies this browser owns.
+      if (isGithubFolder(label)) removeGithubRepo(label);
+      else await removeFolder(label);
+      for (const k of [...expanded.current]) {
+        if (k === `folder:${label}` || k.startsWith(`file:["${label}"`)) expanded.current.delete(k);
+      }
+      setOpen((prev) => new Set([...prev].filter((k) => (JSON.parse(k) as string[])[0] !== label)));
+      setSelected((prev) => {
+        const next = new Map(prev);
+        next.delete(label);
+        return next;
+      });
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        next.delete(label);
+        return next;
+      });
+      // The file column was showing a folder that no longer exists. Hand the choice back to the
+      // effect above rather than leaving an empty column with no way back into one.
+      setActiveFolder((prev) => {
+        if (prev !== label) return prev;
+        picked.current = false;
+        return null;
+      });
+      await readFolders();
+    },
+    [readFolders],
+  );
+
+  return {
+    supported,
+    folders,
+    nodes,
+    open,
+    toggle,
+    selected,
+    activeFolder,
+    select,
+    collapsed,
+    toggleFolder,
+    refresh,
+    add,
+    grant,
+    remove,
+    error,
+  };
+}

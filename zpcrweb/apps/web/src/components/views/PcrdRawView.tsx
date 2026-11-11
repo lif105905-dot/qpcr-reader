@@ -1,0 +1,390 @@
+import { useMemo, useRef, useState } from "react";
+import { safeFileBase } from "@zpcrweb/core";
+import type { DcalEntry, Zpcr } from "@zpcrweb/core";
+import { parseXmlFragment, serializeXmlPretty, XmlTree } from "../../lib/xmlTree";
+import { logEntriesFromElements, summarizeRunLog } from "../../lib/runlog";
+import { decodedToCsv, downloadText, plateReadCsvFilename, plateReadToCsv } from "../../lib/download";
+import { DownloadIcon } from "../DownloadIcon";
+import { DecodedPlateread } from "../raw/DecodedPlateread";
+import { PlateTable } from "../raw/PlateTable";
+import { RunInfoTable } from "../raw/DecodedView";
+import { ProtocolDetail } from "../raw/DecodedProtocol";
+import { RunLogTable } from "../raw/RunLogTable";
+import { DecodedDcal } from "../raw/DecodedDcal";
+
+/**
+ * The `.pcrd` counterpart to `RawFilesView` — but a `.pcrd` has no inner files, so this
+ * browses the document's real XML structure instead of a file list: a "Document" entry shows
+ * the whole tree (large subtrees collapsed by default — see `lib/xmlTree.tsx`), and other nav
+ * entries correspond to `<experimentalData2>`'s actual children (see `pcrd.md`), each showing
+ * either a typed decoded view (reusing the same components `RawFilesView` uses for a `.zpcr`'s
+ * real files) or the raw XML subtree.
+ */
+
+type NavEntry =
+  | { kind: "document" }
+  | { kind: "plateSetup" }
+  | { kind: "protocol" }
+  | { kind: "plateRead"; index: number }
+  | { kind: "calibration"; index: number }
+  | { kind: "runInfo" }
+  | { kind: "log" }
+  | { kind: "other"; el: Element };
+
+interface NavItem {
+  label: string;
+  entry: NavEntry;
+}
+
+interface NavGroup {
+  group: string;
+  items: NavItem[];
+}
+
+function findChild(el: Element | undefined, tagLower: string): Element | undefined {
+  return el && Array.from(el.children).find((c) => c.tagName.toLowerCase() === tagLower);
+}
+
+interface PcrdDocument {
+  root: Element;
+  groups: NavGroup[];
+  plateSetup2El?: Element;
+  protocol2El?: Element;
+  calibrations: DcalEntry[];
+  calibrationDataEls: Element[];
+  runInfoEl?: Element;
+  logEls: Element[];
+  plateReadEls: Element[];
+}
+
+/** The list of `<CalibrationData>` elements inside `<calibrationCollection>`, in the same
+ * `FactoryCals` then `UserCals` order — and same null-Dye/Plate filtering — as
+ * `zpcr.calibrations()` (`decodeCalibrationCollection` in `pcrd.ts`), so `calibrationDataEls[i]`
+ * is the raw-XML counterpart of `zpcr.calibrations()[i]`. */
+function findCalibrationDataEls(calibrationEl: Element): Element[] {
+  const coll = findChild(calibrationEl, "calibrationcollection");
+  const itemsFrom = (listEl: Element | undefined): Element[] => {
+    const ar = findChild(listEl, "ar");
+    if (!ar) return [];
+    return Array.from(ar.children)
+      .map((item) => findChild(item, "calibrationdata"))
+      .filter((el): el is Element => el !== undefined)
+      .filter((el) => {
+        const dye = findChild(el, "dye")?.textContent?.trim();
+        const plate = findChild(el, "plate")?.textContent?.trim();
+        return !!dye && !!plate;
+      });
+  };
+  return [...itemsFrom(findChild(coll, "factorycals")), ...itemsFrom(findChild(coll, "usercals"))];
+}
+
+function buildDocument(root: Element, zpcr: Zpcr): PcrdDocument {
+  const children = Array.from(root.children);
+  const byTag = (tagLower: string): Element | undefined =>
+    children.find((c) => c.tagName.toLowerCase() === tagLower);
+
+  const plateSetup2El = byTag("platesetup2");
+  const protocol2El = byTag("protocol2");
+  const runDataEl = byTag("rundata");
+  const protocolRunInfoEl = byTag("protocolruninfo");
+  const calibrationEl = findChild(runDataEl, "calibrationcollection");
+  const calibrationDataEls = calibrationEl ? findCalibrationDataEls(calibrationEl) : [];
+  const calibrations = zpcr.calibrations();
+  const plateReadVectorEl = findChild(runDataEl, "platereaddatavector");
+  const runInfoEl = findChild(protocolRunInfoEl, "runinfo");
+  const logEls = children.filter((c) => c.tagName.toLowerCase() === "log");
+  const plateReadEls = plateReadVectorEl ? Array.from(plateReadVectorEl.children) : [];
+
+  const known = new Set(
+    [plateSetup2El, protocol2El, runDataEl, protocolRunInfoEl, ...logEls].filter(
+      (e): e is Element => e !== undefined,
+    ),
+  );
+  const otherEls = children.filter((c) => !known.has(c));
+
+  const groups: NavGroup[] = [
+    { group: "Document", items: [{ label: "Document", entry: { kind: "document" } }] },
+  ];
+  if (plateSetup2El) {
+    groups.push({
+      group: "Plate setup",
+      items: [{ label: "plateSetup2", entry: { kind: "plateSetup" } }],
+    });
+  }
+  if (protocol2El) {
+    groups.push({
+      group: "Protocol",
+      items: [{ label: "protocol2", entry: { kind: "protocol" } }],
+    });
+  }
+  if (plateReadEls.length > 0) {
+    groups.push({
+      group: "Plate reads",
+      items: zpcr.reads.map((r, i) => ({
+        label: `Cycle ${r.cycle}`,
+        entry: { kind: "plateRead", index: i },
+      })),
+    });
+  }
+  if (calibrations.length > 0) {
+    groups.push({
+      group: "Calibration",
+      items: calibrations.map((c, i) => ({
+        label: c.name,
+        entry: { kind: "calibration", index: i },
+      })),
+    });
+  }
+  if (runInfoEl) {
+    groups.push({ group: "Run info", items: [{ label: "RunInfo", entry: { kind: "runInfo" } }] });
+  }
+  if (logEls.length > 0) {
+    groups.push({
+      group: "Log",
+      items: [{ label: `log (${logEls.length})`, entry: { kind: "log" } }],
+    });
+  }
+  if (otherEls.length > 0) {
+    groups.push({
+      group: "Other",
+      items: otherEls.map((el) => ({ label: el.tagName, entry: { kind: "other", el } })),
+    });
+  }
+
+  return {
+    root,
+    groups,
+    plateSetup2El,
+    protocol2El,
+    calibrations,
+    calibrationDataEls,
+    runInfoEl,
+    logEls,
+    plateReadEls,
+  };
+}
+
+function entryKey(entry: NavEntry): string {
+  if (entry.kind === "plateRead") return `plateRead:${entry.index}`;
+  if (entry.kind === "calibration") return `calibration:${entry.index}`;
+  if (entry.kind === "other") return `other:${entry.el.tagName}`;
+  return entry.kind;
+}
+
+/** The nav label for `entry`, looked up from {@link PcrdDocument.groups} — the same labels the
+ * left-hand nav list renders (e.g. "Cycle 2" for a plate read), so the toolbar name and download
+ * filename always agree with what's shown in the nav. */
+function entryLabel(entry: NavEntry, doc: PcrdDocument): string {
+  const key = entryKey(entry);
+  for (const g of doc.groups) {
+    const item = g.items.find((i) => entryKey(i.entry) === key);
+    if (item) return item.label;
+  }
+  return key;
+}
+
+/** The XML subtree(s) the "XML" mode renders for a nav entry — mirrors the `mode === "xml"`
+ * branches of {@link PcrdRawContent}, kept separate so the download button can grab the same
+ * roots without rendering. */
+function xmlRootsFor(doc: PcrdDocument, entry: NavEntry): Element[] {
+  switch (entry.kind) {
+    case "document":
+      return [doc.root];
+    case "plateSetup":
+      return doc.plateSetup2El ? [doc.plateSetup2El] : [];
+    case "protocol":
+      return doc.protocol2El ? [doc.protocol2El] : [];
+    case "plateRead": {
+      const el = doc.plateReadEls[entry.index];
+      return el ? [el] : [];
+    }
+    case "calibration": {
+      const el = doc.calibrationDataEls[entry.index];
+      return el ? [el] : [];
+    }
+    case "runInfo":
+      return doc.runInfoEl ? [doc.runInfoEl] : [];
+    case "log":
+      return doc.logEls;
+    case "other":
+      return [entry.el];
+  }
+}
+
+export function PcrdRawView({
+  zpcr,
+  documentXml,
+  fileName,
+}: {
+  zpcr: Zpcr;
+  documentXml: string;
+  fileName: string;
+}) {
+  const pcrdBase = fileName.replace(/\.pcrd$/i, "");
+  const doc = useMemo(() => {
+    // parseXmlFragment always wraps the parsed content in a synthetic root (needed for
+    // multi-rooted fragments like runlog.xml); a .pcrd document is single-rooted
+    // (<experimentalData2>), so that synthetic wrapper's one child *is* the real document
+    // root — unwrap it so `buildDocument` walks experimentalData2's real children instead of
+    // treating experimentalData2 itself as the only "child" to categorize.
+    const wrapper = parseXmlFragment(documentXml);
+    const root = wrapper && wrapper.children.length === 1 ? wrapper.children[0]! : wrapper;
+    return root ? buildDocument(root, zpcr) : null;
+  }, [documentXml, zpcr]);
+
+  const [selected, setSelected] = useState<NavEntry>({ kind: "document" });
+  const [mode, setMode] = useState<"decoded" | "xml">("xml");
+
+  if (!doc) return <div className="decoded__na mono">Could not parse the .pcrd document.</div>;
+
+  const select = (entry: NavEntry, hasDecoded: boolean) => {
+    setSelected(entry);
+    setMode(hasDecoded ? "decoded" : "xml");
+  };
+
+  const hasDecoded = (entry: NavEntry): boolean =>
+    entry.kind === "plateSetup" ||
+    entry.kind === "protocol" ||
+    entry.kind === "plateRead" ||
+    entry.kind === "calibration" ||
+    entry.kind === "runInfo" ||
+    entry.kind === "log";
+
+  const decodedRef = useRef<HTMLDivElement>(null);
+  const canDownload = mode === "xml" ? xmlRootsFor(doc, selected).length > 0 : hasDecoded(selected);
+
+  const handleDownload = () => {
+    const label = safeFileBase(entryLabel(selected, doc));
+    if (mode === "xml") {
+      const roots = xmlRootsFor(doc, selected);
+      if (roots.length === 0) return;
+      const xmlName =
+        selected.kind === "document" ? `${pcrdBase}.pcrd.xml` : `${pcrdBase}.pcrd.${label}.xml`;
+      downloadText(xmlName, serializeXmlPretty(roots), "application/xml");
+    } else if (selected.kind === "plateRead") {
+      const read = zpcr.reads[selected.index];
+      if (read) downloadText(plateReadCsvFilename(zpcr, read), plateReadToCsv(read), "text/csv");
+    } else if (decodedRef.current) {
+      downloadText(`${label}.csv`, decodedToCsv(decodedRef.current), "text/csv");
+    }
+  };
+
+  return (
+    <div className="raw">
+      <aside className="raw__list">
+        {doc.groups.map((g) => (
+          <div className="raw__group" key={g.group}>
+            <div className="raw__grouphead">{g.group}</div>
+            {g.items.map((item) => (
+              <button
+                key={entryKey(item.entry)}
+                className={
+                  "raw__item mono" + (entryKey(item.entry) === entryKey(selected) ? " is-active" : "")
+                }
+                onClick={() => select(item.entry, hasDecoded(item.entry))}
+                title={item.label}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        ))}
+      </aside>
+
+      <section className="raw__viewer">
+        <div className="raw__toolbar">
+          <span className="raw__fname mono">{entryLabel(selected, doc)}</span>
+          <div className="segmented segmented--sm raw__modes">
+            <button
+              className={"segmented__item" + (mode === "decoded" ? " is-active" : "")}
+              onClick={() => setMode("decoded")}
+              disabled={!hasDecoded(selected)}
+              title={hasDecoded(selected) ? "" : "No decoder for this node"}
+            >
+              Decoded
+            </button>
+            <button
+              className={"segmented__item" + (mode === "xml" ? " is-active" : "")}
+              onClick={() => setMode("xml")}
+            >
+              XML
+            </button>
+          </div>
+          <button
+            className="raw__download"
+            onClick={handleDownload}
+            disabled={!canDownload}
+            aria-label="Download"
+            title={mode === "decoded" ? "Download table as CSV" : "Download as a file"}
+          >
+            <DownloadIcon />
+          </button>
+        </div>
+
+        <div className="raw__decoded" ref={decodedRef}>
+          <PcrdRawContent zpcr={zpcr} doc={doc} entry={selected} mode={mode} />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PcrdRawContent({
+  zpcr,
+  doc,
+  entry,
+  mode,
+}: {
+  zpcr: Zpcr;
+  doc: PcrdDocument;
+  entry: NavEntry;
+  mode: "decoded" | "xml";
+}) {
+  if (entry.kind === "document") return <XmlTree roots={[doc.root]} />;
+
+  if (entry.kind === "plateSetup") {
+    if (mode === "xml") return <XmlTree roots={doc.plateSetup2El ? [doc.plateSetup2El] : []} />;
+    const plate = zpcr.plates()[0]?.pltd.plate;
+    if (!plate) return <div className="decoded__na mono">No plate decoded.</div>;
+    return <PlateTable plate={plate} sourceHint="embedded in .pcrd document" />;
+  }
+
+  if (entry.kind === "protocol") {
+    if (mode === "xml") return <XmlTree roots={doc.protocol2El ? [doc.protocol2El] : []} />;
+    const protocol = zpcr.protocol();
+    if (!protocol) return <div className="decoded__na mono">No protocol embedded in this document.</div>;
+    return <ProtocolDetail protocol={protocol} sourceHint="embedded in .pcrd document" />;
+  }
+
+  if (entry.kind === "plateRead") {
+    const el = doc.plateReadEls[entry.index];
+    if (mode === "xml") return <XmlTree roots={el ? [el] : []} />;
+    const read = zpcr.reads[entry.index];
+    if (!read) return <div className="decoded__na mono">No decoded read.</div>;
+    return <DecodedPlateread read={read} />;
+  }
+
+  if (entry.kind === "calibration") {
+    if (mode === "xml") {
+      const el = doc.calibrationDataEls[entry.index];
+      return <XmlTree roots={el ? [el] : []} />;
+    }
+    const cal = doc.calibrations[entry.index];
+    if (!cal) return <div className="decoded__na mono">No decoded calibration.</div>;
+    return <DecodedDcal dcal={cal.dcal} />;
+  }
+
+  if (entry.kind === "runInfo") {
+    if (mode === "xml") return <XmlTree roots={doc.runInfoEl ? [doc.runInfoEl] : []} />;
+    const text = doc.runInfoEl ? new XMLSerializer().serializeToString(doc.runInfoEl) : "";
+    return <RunInfoTable text={text} />;
+  }
+
+  if (entry.kind === "log") {
+    if (mode === "xml") return <XmlTree roots={doc.logEls} />;
+    return <RunLogTable parsed={summarizeRunLog(logEntriesFromElements(doc.logEls))} />;
+  }
+
+  // "other"
+  return <XmlTree roots={[entry.el]} />;
+}

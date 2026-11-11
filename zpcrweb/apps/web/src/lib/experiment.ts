@@ -1,0 +1,175 @@
+/**
+ * What a loaded file is *called*, and when it was run — the two things the file bar and the
+ * Overview view lead with, in place of the filename.
+ *
+ * A filename like `20260726_S183-S185_RVP.zpcr` is three facts glued together (a date, a
+ * machine, a name) in a form that is wide, hard to scan, and mostly redundant with the tiles
+ * right beside it. So the app shows the name and a compact local timestamp instead, and keeps
+ * the filename where it is still the answer to something: the hover card, the Overview header's
+ * second line, and the download button.
+ *
+ * The resolution rules live in `@zpcrweb/core`'s `experiment.ts` (stored name → the format's own
+ * → derived from the filename); this module only adds the app's side — where the stored name
+ * comes from, and how a `Date` is rendered.
+ */
+import {
+  deriveExperimentName,
+  resolveExperimentName,
+  resolveRunStart,
+  runFileBaseName,
+  runProgressFromNames,
+  type FileKind,
+  type Zpcr,
+} from "@zpcrweb/core";
+import { contentEntryNames } from "../state/fileContent";
+import type { LoadedFile, RunResult } from "../state/useZpcrStore";
+
+export interface ExperimentIdentity {
+  /** The run's short name — never empty for a file with a name (see `resolveExperimentName`). */
+  name: string;
+  /**
+   * True when {@link name} was actually *given* — a stored `zpcrweb.json` name, or (Biomeme) the
+   * format's own — as opposed to merely derived from the file name. This is what tells Overview a
+   * pending experiment still needs a real name typed in, as distinct from an ordinary finished run
+   * that legitimately has no stored name because its filename already says enough.
+   */
+  named: boolean;
+  /** Run start, when the file records one. Null for a standalone plate or protocol file. */
+  date: Date | null;
+  /** {@link date} through {@link formatCompactDateTime}, or `""` when there is none. */
+  dateText: string;
+  /** The file on disk. Still shown — just no longer as the headline. */
+  fileName: string;
+}
+
+/**
+ * `7/26/26 5:12pm` — a timestamp narrow enough to sit under a file chip, from the date's
+ * **local fields**.
+ *
+ * What is shown is the instrument's own clock — the `.alf` report's start time, which core's
+ * `resolveRunStart` reinterprets in the browser's zone precisely so that these local fields are
+ * the digits the touchscreen showed. The archive's `RunStartTime` is stamped GMT but computed from
+ * a zone offset the instrument guesses at, so converting *that* to local time is what used to put
+ * a run hours in the future. Locale-independent formatting, so it renders identically wherever it
+ * is read and never surprises with a different order.
+ */
+export function formatCompactDateTime(date: Date): string {
+  const hours = date.getHours();
+  const h12 = hours % 12 === 0 ? 12 : hours % 12;
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  const yy = String(date.getFullYear() % 100).padStart(2, "0");
+  return `${date.getMonth() + 1}/${date.getDate()}/${yy} ${h12}:${mm}${hours < 12 ? "am" : "pm"}`;
+}
+
+/**
+ * Identify one loaded file. `storedName` is the app's live copy of `zpcrweb.json`'s
+ * `experimentName` (`FileSettings.experimentName`) rather than the archive's, so a name typed a
+ * moment ago is already on the chip — the archive itself is only rewritten once a minute (see
+ * `analysisPersist.ts`).
+ */
+/** The last path component of a file's name. Everything but a disk-backed file (whose name is a
+ * folder-rooted path) is returned unchanged. */
+function baseName(name: string): string {
+  return name.slice(name.lastIndexOf("/") + 1);
+}
+
+/**
+ * The open file a run of this name is, **wherever it happens to sit** — the run watcher's "do we
+ * already have this run?" (`state/useRunWatch.ts`'s `heldRun`).
+ *
+ * The instrument names a run from the folder it is writing (`core/runFolder.ts`'s
+ * `zpcrNameFromRunFiles`), and what comes back is a bare file name — the run has no idea where the
+ * browser keeps it. A file opened out of a granted folder is keyed by its folder-rooted path
+ * (`state/useZpcrStore.ts`'s `addDiskFiles`), so an exact-name lookup misses it every time: connect
+ * to an instrument mid-run with that run's own file open from a shared folder and the app used to
+ * conclude it held nothing, download the whole run again, and file it as a second, browser-only
+ * copy beside the one on disk — which then never received another plate read.
+ *
+ * So the folder part is ignored, and the candidate is confirmed two ways instead:
+ *
+ * - **The run isn't over.** A finished `.zpcr` of the same base name in some other folder is a run
+ *   of its own, and appending to it would rewrite a record of something already done. Only a run
+ *   still open to more — pending or in progress — can be what the instrument is writing now.
+ * - **The caller checks identity.** Every caller compares the candidate's `RunInfo.xml` against the
+ *   folder's (`isSameRun`) before a byte is merged, so a same-named file that is a *different* run
+ *   is rejected there rather than here.
+ *
+ * An exact match is taken first and unconditionally: that is the file the watcher has already been
+ * writing to, and it stays the answer whatever state its run is in.
+ */
+export function findRunFile(
+  loaded: readonly LoadedFile[],
+  name: string,
+): LoadedFile | undefined {
+  const exact = loaded.find((f) => f.name === name);
+  if (exact) return exact;
+  const base = baseName(name);
+  return loaded.find(
+    (f) =>
+      f.kind === "zpcr" &&
+      baseName(f.name) === base &&
+      !runProgressFromNames(contentEntryNames(f.content)).ended,
+  );
+}
+
+export function experimentIdentity(
+  file: LoadedFile,
+  run: RunResult | undefined,
+  storedName: string | undefined,
+): ExperimentIdentity {
+  const metadata = run?.zpcr?.metadata ?? null;
+  const date = resolveRunStart({ reports: run?.zpcr?.runReports(), metadata });
+  return {
+    // A disk-backed file's name is its path within the granted folder (`state/db.ts`'s
+    // `DiskSource`), and what the run is *called* comes from the file's own name, not from the
+    // directories it happens to sit in — `runs/2026-07/a.zpcr` is the run `a`, not `runs/2026-07/a`.
+    // Harmless for an uploaded file, whose name never contains a slash.
+    name: resolveExperimentName({ stored: storedName, metadata, fileName: baseName(file.name) }),
+    named: !!storedName?.trim() || !!metadata?.experimentName?.trim(),
+    date,
+    dateText: date ? formatCompactDateTime(date) : "",
+    fileName: file.name,
+  };
+}
+
+/**
+ * A `.zpcr` with no results yet and no instrument ever accepted a start for it — the on-disk
+ * analog of what a seed file used to be (`core/runSeed.ts`, since removed), except created
+ * explicitly and by name rather than as a side effect of starting. This covers both a
+ * freshly-created/cloned file and one that's had a protocol/plate attached but never started.
+ *
+ * `zpcr.reads.length > 0` is impossible for a pending experiment by definition — a read only
+ * arrives once a run is under way — which is exactly what "clone before starting a fresh run"
+ * enforces: once there's a plate read, Start is unreachable on purpose (`activeRun.zpcr.reads`,
+ * not a separate flag). The `kind === "zpcr"` check is what a `.pcrd`/Biomeme run's own
+ * finished-by-construction nature already implies (see `runFolder.ts`'s `runCompleteness`), and
+ * is checked here explicitly since only a `.zpcr` archive can carry the `begun` marker at all.
+ */
+export function isPendingExperiment(kind: FileKind, zpcr: Zpcr): boolean {
+  return (
+    kind === "zpcr" &&
+    zpcr.reads.length === 0 &&
+    !runProgressFromNames(zpcr.archive.entries).begun
+  );
+}
+
+/**
+ * Rebuild a `.zpcr` file name with today's date, if its base is already in the
+ * `<YYYYMMDD>-<name>`/`<YYYYMMDD>_<name>` form `runFileBaseName` writes — what "Start experiment"
+ * applies once, so a pending experiment cloned or created days ago and started today gets today's
+ * date rather than the day it was made (`state/useZpcrStore.ts`'s `beginExperiment`).
+ *
+ * Returns `null` when there's nothing to restamp: no leading date to begin with (a name typed
+ * over the auto-generated one, or a file renamed by hand), or the date is already today's —
+ * either way the caller keeps the file's current name.
+ */
+export function restampExperimentDate(fileName: string, date: Date = new Date()): string | null {
+  const m = /^(.*)(\.zpcr)$/i.exec(fileName);
+  const ext = m ? m[2]! : "";
+  const base = m ? m[1]! : fileName;
+  if (!/^\d{8}[-_]/.test(base)) return null;
+  const restamped = runFileBaseName(deriveExperimentName(fileName), date);
+  if (!restamped) return null;
+  const next = `${restamped}${ext}`;
+  return next === fileName ? null : next;
+}

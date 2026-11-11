@@ -1,0 +1,1374 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  fileCategory,
+  meltSegments,
+  parseAlf,
+  parseRunDefinition,
+  plateToCsv,
+  ProtocolBuilder,
+  runFileBaseName,
+  runProgressFromNames,
+  type FileCategory,
+  type FileKind,
+  type ZpcrArchive,
+  type RunPlan,
+  type Zpcr,
+} from "@zpcrweb/core";
+import { fileBytes, useZpcrStore } from "./state/useZpcrStore";
+import { useCfxDevice } from "./state/useCfxDevice";
+import { useRunWatch } from "./state/useRunWatch";
+import { usePltdPassword } from "./state/pltdPassword";
+import { formatLoadHash } from "./state/urlHash";
+import { cloneFileName, splitFileName } from "./lib/cloneName";
+import { findRunFile, isPendingExperiment } from "./lib/experiment";
+import { plateSources, protocolSources } from "./lib/attachSources";
+import { plateCsvFileName } from "./lib/plateNames";
+import { sampleUrl } from "./lib/samples";
+import { downloadBytes } from "./lib/download";
+import { useHeaderFit } from "./state/useHeaderFit";
+import { DropZone } from "./components/DropZone";
+import { useDiskTree } from "./state/useDiskTree";
+import { listGithubFolders } from "./state/githubRepos";
+import { FileBar } from "./components/FileBar";
+import { FilesTableView } from "./components/FilesTableView";
+import { ViewBar } from "./components/ViewBar";
+import { PasswordPrompt } from "./components/PasswordPrompt";
+import { OverviewView } from "./components/views/OverviewView";
+import { CurvesView } from "./components/views/CurvesView";
+import { CalibrationView } from "./components/views/CalibrationView";
+import { ReferenceView } from "./components/views/ReferenceView";
+import { PlatesView } from "./components/views/PlatesView";
+import { RawFilesView } from "./components/views/RawFilesView";
+import { PcrdRawView } from "./components/views/PcrdRawView";
+import { StandalonePlateView } from "./components/views/StandalonePlateView";
+import { StandalonePlateOverviewView } from "./components/views/StandalonePlateOverviewView";
+import { StandaloneRawView } from "./components/views/StandaloneRawView";
+import { StandaloneProtocolOverview } from "./components/views/StandaloneProtocolOverview";
+import { StandaloneReportOverview } from "./components/views/StandaloneReportOverview";
+import { ProtocolView } from "./components/views/ProtocolView";
+import { AboutView } from "./components/views/AboutView";
+import { InstrumentView, type InstrumentExperiment } from "./components/views/InstrumentView";
+import type { ViewId } from "./state/useZpcrStore";
+
+/**
+ * The **view bar** is the app's tab strip (`components/ViewBar.tsx`); the **file bar** is the row
+ * of chips under it (`components/FileBar.tsx`). Everything in the view bar except its Files tab is
+ * a lens on the one file the file bar has selected, and this module is where that correspondence
+ * is enforced: {@link enabledViewsFor} answers "which tabs does *this* file support", and an empty
+ * answer — no selection, or a run that hasn't decoded — greys the whole group out.
+ */
+const STANDALONE_VIEWS = ["overview", "plates", "raw"] as const;
+/** A Biomeme run has no reference row and no `.Dcal` calibration files, so those two tabs are
+ * disabled. Raw stays: the run *is* one JSON document, so there is no archive to browse
+ * (`Zpcr.archive` is honestly empty) but there is very much a file to read — rendered by the
+ * same {@link StandaloneRawView} a `.plt.csv` gets, for the same reason (one text file, no
+ * container around it). */
+const BIOMEME_VIEWS = ["overview", "protocol", "curves", "plates", "raw"] as const;
+/** A protocol file — `.prcl.txt` or `.prcl` — is a document to read (Protocol, the annotated
+ * directive listing of `protocol.md`, editable for the text form) and a file to inspect verbatim
+ * (Raw: the text as typed for a `.prcl.txt`, the decrypted XML for a `.prcl`, the same way a
+ * `.pltd` shows its payload). Overview stays minimal — just the filename, per
+ * {@link StandaloneProtocolOverview} — since Protocol is where the content actually lives. It has
+ * no curves and no plate, and no longer lists Instrument: a protocol file is not something that
+ * can be started, only attached to an experiment that can (see {@link InstrumentView}). */
+const PROTOCOL_VIEWS = ["overview", "protocol", "raw"] as const;
+/** An `.alf` run report is a record of a run that happened, holding no fluorescence and no plate —
+ * so Overview (the identity card and the report's own header/error detail, see
+ * {@link StandaloneReportOverview}), Protocol, and Raw.
+ *
+ * Protocol is here because a report *carries* a protocol — the one the instrument actually ran,
+ * post-expansion and with the real scan mask (`alf.md` §5) — plus the only record of what that
+ * protocol cost in wall-clock time, which is the thermal profile {@link ProtocolView} plots. It is
+ * not editable: a report is a record of what happened, not a draft.
+ *
+ * A report is what a thermal-only run produces instead of a `.zpcr` (`state/useRunWatch.ts`). */
+const REPORT_VIEWS = ["overview", "protocol", "raw"] as const;
+/** A `.usblog` USB traffic recording is this app's own record of a session at the instrument, not
+ * anything the instrument made: no run, plate or protocol to show, only the log itself. So Raw is
+ * its one tab, and {@link StandaloneRawView} opens it decoded — every message explained — the same
+ * as the `usb-traffic.usblog` inside a run's `.zpcr`. */
+const LOG_VIEWS = ["raw"] as const;
+
+/** A `.pltd`/`.plt.csv` uploaded on its own, rather than a run — only these three tabs apply. */
+const isStandaloneKind = (kind: string) => kind === "pltd" || kind === "platecsv";
+
+/** A thermal protocol on its own, in either encoding: Bio-Rad's encrypted `.prcl` or this
+ * project's `.prcl.txt`. They are the same document in the same tabs — which is why they share
+ * {@link PROTOCOL_VIEWS} and the one branch below — and differ in exactly two visible ways, both
+ * decided at the `ProtocolView` call site: only the text form can be *edited* (there is no
+ * encrypted-container writer), and only the `.prcl` carries a structured *step list* of its own. */
+const isProtocolKind = (kind: string) => kind === "prcl" || kind === "prcltxt";
+
+/**
+ * The views that are not lenses on the selected file, and so survive a selection that supports
+ * nothing — including no selection at all. Files is the catalog, About is the app itself, and
+ * Instrument is a machine on the other end of a cable (see `ViewBar`); none of the three has a
+ * reason to be swapped out from under the user because a chip changed.
+ */
+const FILE_INDEPENDENT_VIEWS = new Set<ViewId>(["files", "about", "instrument"]);
+
+/**
+ * The view-bar tabs a given file supports. The tabs it leaves out are still drawn — greyed out,
+ * see `ViewBar` — so this decides what is *enabled*, not what exists.
+ *
+ * An **empty** result means "no tab applies": a run that hasn't decoded (behind the password
+ * prompt, or failed), which has nothing to show anywhere. The caller uses the same empty answer
+ * for "nothing is selected", since the two produce the same strip.
+ */
+function enabledViewsFor(kind: string, zpcr?: Zpcr | null): readonly ViewId[] {
+  if (isStandaloneKind(kind)) return STANDALONE_VIEWS;
+  if (kind === "biomeme") return BIOMEME_VIEWS;
+  if (isProtocolKind(kind)) return PROTOCOL_VIEWS;
+  if (kind === "alf") return REPORT_VIEWS;
+  if (kind === "usblog") return LOG_VIEWS;
+  if (!zpcr) return [];
+  // Instrument isn't here: it is not a lens on this file, or on any file (see `ViewBar`). Which
+  // experiment it would *start* is asked in the view itself — `instrumentExperiment` below.
+  return runViews(zpcr);
+}
+
+/**
+ * Where "go and look at this file" lands, per **category** of file rather than per encoding: a run
+ * opens on its amplification curves, a plate on the plate map, a protocol on the protocol, and a
+ * run report on the protocol it records. That is the thing each file is *for* — the view someone
+ * opening it came to see — and asking `fileCategory` rather than listing every encoding means a
+ * new encoding of an existing category needs nothing here.
+ *
+ * Overview is the fallback rather than the answer. The preferred view has to be one this
+ * particular file actually supports ({@link enabledViewsFor}) — a run still recording has no
+ * Curves, a pending experiment no Plates — so a file that can't answer its category's question
+ * lands on its first enabled tab instead, which is Overview for everything that has one.
+ */
+const CATEGORY_VIEW: Record<FileCategory, ViewId> = {
+  run: "curves",
+  plate: "plates",
+  protocol: "protocol",
+  report: "protocol",
+  log: "raw",
+};
+
+function defaultViewFor(kind: string, zpcr?: Zpcr | null): ViewId {
+  const enabled = enabledViewsFor(kind, zpcr);
+  const preferred = CATEGORY_VIEW[fileCategory(kind as FileKind)];
+  return (preferred && enabled.includes(preferred) ? preferred : enabled[0]) ?? "overview";
+}
+
+/**
+ * The tabs a run supports, from what it actually holds rather than from what kind of file it is.
+ *
+ * A finished run holds everything and this returns the full set — but a run *in progress* does
+ * not, and the extreme case is a pending experiment (`lib/experiment.ts`): a protocol at most, and
+ * often not even that. Curves with no plate read, Reference with no readings to compare against
+ * `FactoryRefRowCal`, and Calibration with no calibration set each render an empty frame that reads
+ * as a broken view rather than an absent one — so each is greyed out with the same "not available
+ * for this file" the other kinds already get, and comes back on its own as the instrument produces
+ * the data, since every snapshot re-parses.
+ *
+ * Protocol is the one tab a pending experiment always gets even with nothing in it, because there
+ * it is the *editor* rather than a record — that is where a from-scratch experiment's protocol comes
+ * from (see `ProtocolView`). Plates, by contrast, needs a plate to show, and attaching one is an
+ * Overview affordance while the experiment is pending.
+ */
+function runViews(zpcr: Zpcr): readonly ViewId[] {
+  const views: ViewId[] = ["overview", "protocol"];
+  const read = zpcr.reads.length > 0;
+  if (read) views.push("curves");
+  // A melt tab only exists when the run actually swept temperature: it is the same view as Curves
+  // with the melt step selected, so a run without one has nothing to put behind the tab.
+  if (read && meltSegments(zpcr).length > 0) views.push("melt");
+  if (read || zpcr.plates().length > 0) views.push("plates");
+  // Reference plots the reference row's own readings against the factory calibration, and
+  // Calibration separates this run's channels through the calibration set: both need readings
+  // *and* the thing they are read against. Asked of the decoded run rather than of its archive
+  // entries, since a `.pcrd` carries the same calibrations with no archive at all (see "Format
+  // independence") — `calibrations()` decodes them, which is why the caller memoizes this.
+  if (read && zpcr.factoryRefCal().length > 0) views.push("reference");
+  if (read && zpcr.calibrations().length > 0) views.push("calibration");
+  views.push("raw");
+  return views;
+}
+
+/**
+ * The run offered on the welcome screen — one of the bundled samples, served at the same path the
+ * `samples` folder in the Files view opens its files from, so there is one copy of the file and
+ * one way of reaching it (`lib/samples.ts`).
+ */
+const EXAMPLE_FILE = sampleUrl("20260726_S183-S185_RVP.zpcr");
+
+/** The wordmark, doubling as the link to the About page. Split so a narrow header can drop the
+ * "//web" tail (see `.app__logo-rest` in `app.css` and `useHeaderFit`) and keep "zpcr" — the
+ * full mark plus the eight view tabs plus the load button don't fit across a phone in portrait. */
+function Logo({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="app__logo mono"
+      onClick={onClick}
+      title="About zpcrweb"
+      aria-label="About zpcrweb"
+    >
+      <span className="app__logo-z">z</span>
+      pcr
+      <span className="app__logo-rest">//web</span>
+    </button>
+  );
+}
+
+/**
+ * The app's one error banner — whatever `ZpcrStore.error` last said, in the bottom-right corner,
+ * over everything.
+ *
+ * It has a ✕ because it sits *over* the page rather than in it: an error left on screen covers the
+ * controls underneath it, which for a folder whose permission lapsed were the "Grant access" button
+ * that would have fixed the thing it was complaining about. Dismissing is the only thing it does —
+ * nothing is retried, nothing is undone; the message has been read.
+ */
+function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div className="app__error mono" role="alert">
+      <span>{message}</span>
+      <button
+        type="button"
+        className="app__errordismiss"
+        onClick={onDismiss}
+        title="Dismiss"
+        aria-label="Dismiss this message"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+export function App() {
+  const store = useZpcrStore();
+  const { active, activeRun, settings } = store;
+  // Called before the early returns below, as hook order demands. The only dep is the selected
+  // tab: the strip is the same tabs for every file (they disable rather than disappear), so the
+  // header's natural width changes only with which label level 2 keeps — or with a resize, which
+  // the hook's own `ResizeObserver` catches.
+  const { ref: headerRef, fit } = useHeaderFit([store.view]);
+  const [pltdPassword, setPassword] = usePltdPassword();
+  /**
+   * The granted folders and their lazily-listed trees.
+   *
+   * The sources it is handed are the open disk-backed files, which is what decides the branches
+   * that open by themselves the first time a folder is shown — so the app never searches the disk
+   * to work out where to look, it reads that off the list of files it already has. Off `files`
+   * rather than `loaded`, so a file whose folder is still waiting on its permission back is one
+   * whose branch opens too: it is exactly the file the user is about to grant access for. And
+   * granting is what reads those files in (`retryUnread`). See `useDiskTree`.
+   */
+  const openDiskSources = useMemo(
+    () => [
+      ...store.files.flatMap((f) => (f.source ? [f.source] : [])),
+      // A file opened out of a repository has no `source` — it is a copy, since nothing is written
+      // back (`state/githubRepos.ts`) — but its *name* is still the folder it came from and the
+      // path under it, which is all the tree needs to open the branch it lives on. Without this,
+      // following a link into a repository lands on the repository's root with the file it just
+      // opened two directories away.
+      ...store.files.flatMap((f) => {
+        const label = listGithubFolders().find((g) => f.name.startsWith(`${g.label}/`))?.label;
+        return label ? [{ folder: label, path: f.name.slice(label.length + 1).split("/") }] : [];
+      }),
+    ],
+    [store.files],
+  );
+  const diskTree = useDiskTree(openDiskSources, store.view === "files", store.retryUnread);
+  /** Grant a folder and go and look at it: its tree lives in the Files view, so landing anywhere
+   * else would make picking a folder look like it did nothing. */
+  const addFolder = useCallback(async () => {
+    // The open files' names, so the folder can't land under one of them: everything in the Files
+    // view is addressed by name, and a folder's label is the first component of every file name
+    // beneath it.
+    await diskTree.add(store.files.map((f) => f.name));
+    store.setView("files");
+  }, [diskTree, store]);
+  /**
+   * The instrument connection, held here rather than inside the Instrument view.
+   *
+   * It used to live in that view, which meant leaving the view closed the USB interface — fine
+   * when the view was the only thing that talked to the instrument, and wrong now that a started
+   * run has to keep being followed while you sit in Curves watching its amplification curves come
+   * in. The connection is a property of the session, not of a tab.
+   */
+  const instrument = useCfxDevice();
+  /**
+   * Keep a `.zpcr` of the run in progress up to date in the file list.
+   *
+   * Activating the refreshed copy only when the user was already on it: following unconditionally
+   * would yank the view back to the running experiment every cycle. Following it when they *are*
+   * on it is the whole point — that is what makes the Curves view grow a cycle at a time.
+   *
+   * The watcher's own `activate` overrides that, for the two files someone just caused to exist:
+   * a run that began during this session, and a run they clicked Download run for. Neither has a
+   * previous view of *this* run to preserve, and both are what the person who acted wants on
+   * screen (see `useRunWatch`'s `onRun`).
+   */
+  /**
+   * The names of the experiment this session started, pinned at the click on Start.
+   *
+   * The run watcher names each snapshot it pulls from these (`core/runFolder.ts`'s naming
+   * precedence), which is what makes the snapshots *supersede* the experiment's own file rather than
+   * landing beside it. Pinned rather than read live off the active file for the same reason it
+   * always was: the selection can move while a run cycles, and the run being assembled has to keep
+   * the name it was started under. It is far less machinery than the phase/lock state this replaced
+   * (`useRunNaming`, removed), because there is no longer a *typed* name to protect — the name is a
+   * property of the file before the instrument is ever involved, so all that is left to remember is
+   * which file was started.
+   */
+  const [startedRun, setStartedRun] = useState<{ experimentName: string; fileName: string } | null>(
+    null,
+  );
+
+  /**
+   * File one of the instrument's own `.alf` run reports, added exactly as a dropped file would be —
+   * validated, persisted and selected — so it is a file of the user's from the moment it lands
+   * rather than a special case the rest of the app has to know about. Marked modified: like every
+   * file this app makes rather than reads, it exists only in the browser until it is saved.
+   *
+   * Two callers, deliberately the same one: the run watcher, for a thermal-only run whose report is
+   * its entire output, and the Instrument view's Last run section, where the user asks for the report
+   * the instrument is already holding. A report collected automatically and one collected by hand
+   * should be the same file in every respect.
+   */
+  const openReport = useCallback(
+    async (name: string, bytes: Uint8Array) =>
+      store.addFiles([new File([bytes.slice()], name, { lastModified: Date.now() })], {
+        modified: true,
+      }),
+    [store],
+  );
+
+  const runWatch = useRunWatch(
+    instrument,
+    useCallback(
+      async (
+        run: { name: string; archive: ZpcrArchive; whole: boolean },
+        previousId: string | null,
+        activate: boolean,
+      ) => {
+        const wasWatchingIt = store.activeName !== null && store.activeName === previousId;
+        return store.addRunArchive(run.name, run.archive, {
+          activate: wasWatchingIt || activate,
+          modified: true,
+          // What the instrument just wrote, laid over the run's file — not the run re-assembled.
+          merge: !run.whole,
+        });
+      },
+      [store],
+    ),
+    openReport,
+    // What the app is holding for a run — the watcher's only record of what it has already
+    // downloaded, so that the file the user has and the bytes the watcher believes in are the same
+    // thing (see `useRunWatch`'s `heldRun`). A file that isn't loaded reads as nothing held.
+    useCallback(
+      (fileName: string) => {
+        // By base name, not by id: the run names itself from the instrument's own folder and knows
+        // nothing of where this browser keeps it, which for a file opened out of a granted folder
+        // is a path (`findRunFile`).
+        const file = findRunFile(store.loaded, fileName);
+        return file && file.content.archive ? { id: file.name, files: file.content.files } : null;
+      },
+      [store.loaded],
+    ),
+    // Every `.zpcr` held, so the watcher can find a run's file by what it is — its `RunInfo.xml`,
+    // or the experiment it was started from — when its name no longer points there (a rename, a
+    // reload that forgot `startedRun`). See `RunFollowerPorts.openRuns`.
+    useCallback(
+      () =>
+        store.loaded.flatMap((f) =>
+          f.kind === "zpcr" && f.content.archive ? [{ id: f.name, files: f.content.files }] : [],
+        ),
+      [store.loaded],
+    ),
+    startedRun ?? undefined,
+  );
+  /**
+   * The open file whose run is on the block right now (core's `RunFollowerState.runningFile`), or
+   * null. The follower may still name a file the user has since closed, so it only counts while
+   * the file is still open. This is what the Instrument view's subject and its file-bar lock key on.
+   */
+  const runningFileName =
+    runWatch.runningFile && store.files.some((f) => f.name === runWatch.runningFile)
+      ? runWatch.runningFile
+      : null;
+  /** The file bar is locked to the running file — but only on the Instrument view. */
+  const selectionLockedTo = store.view === "instrument" ? runningFileName : null;
+  // Where "← back" on the About page (and the Files table's own ✕) return to, so opening either
+  // and leaving again is a no-op.
+  const lastView = useRef<ViewId>("curves");
+  if (store.view !== "about" && store.view !== "files") lastView.current = store.view;
+  const showAbout = () => store.setView("about");
+  const leaveAbout = () => store.setView(lastView.current);
+  const leaveFiles = () => store.setView(lastView.current);
+
+  // The example goes through the `#load=` hash key rather than calling `addUrl` directly, so
+  // the in-app affordance and an external deep link are the same code path. `AboutView` renders
+  // it as a real <a href={exampleHref}> — not a button — so the browser's own affordances work
+  // on it: "Copy link address", middle-click, a visible target in the status bar. Navigating to
+  // it is all it takes; `loadExample` covers only the case where the hash *already* is that
+  // value (a repeat click after a failed fetch), which fires no `hashchange`, so nothing would
+  // otherwise happen.
+  // A run assembled off the instrument is an ordinary added file, so it takes the same
+  // `addFiles` path as a drop — and then leaves the Instrument view for it, since staying on a
+  // view that shows no file would make a successful open look like nothing happened. Only on success:
+  // a rejected archive leaves you where you are, with the error banner.
+  const openRun = async (name: string, archive: ZpcrArchive) => {
+    if (await store.addRunArchive(name, archive, { modified: true })) store.setView("overview");
+  };
+  // One file off the instrument — a completed run's `.zpcr` from `Real-Time Data` — is the same
+  // again, minus the assembly: the instrument already holds it whole. Filed the way a report is.
+  const openInstrumentFile = async (name: string, bytes: Uint8Array) => {
+    if (await openReport(name, bytes)) store.setView("overview");
+  };
+
+  /**
+   * The file whose Overview should open with its "Filename" row already in edit mode — set by
+   * {@link cloneActiveFile}, cleared by the panel once it has acted on it.
+   *
+   * Held by id rather than as a bare flag because the clone is added asynchronously: by the time
+   * the new file is active and its Overview renders, this is what says "*that* one was just made,
+   * so name it" — and a file the user selects some other way in the meantime doesn't inherit the
+   * request.
+   */
+  const [editNameFor, setEditNameFor] = useState<string | null>(null);
+  const clearEditName = useCallback(() => setEditNameFor(null), []);
+
+  /**
+   * The experiment whose Overview should open with its *name* field focused — the counterpart to
+   * {@link editNameFor}, which focuses the **file name** row instead.
+   *
+   * Two different fields, and which one a new file wants depends on what kind of new file it is. A
+   * cloned `.prcl.txt` or plate is a file you rename; a new experiment is a thing you *name*, and
+   * its file name follows from that automatically (see `nameExperiment`). Held by id, for the same
+   * reason `editNameFor` is: the file is added asynchronously, and a file selected some other way in
+   * the meantime must not inherit the request.
+   */
+  const [nameExperimentFor, setNameExperimentFor] = useState<string | null>(null);
+  const clearNameExperiment = useCallback(() => setNameExperimentFor(null), []);
+
+  /** The same signal for a just-created *protocol*, whose name the Protocol tab asks for — see
+   * {@link createProtocolFor}. Separate from {@link nameExperimentFor} because the two are different
+   * fields on different tabs, and a file can be waiting on either. */
+  const [nameProtocolFor, setNameProtocolFor] = useState<string | null>(null);
+  const clearNameProtocol = useCallback(() => setNameProtocolFor(null), []);
+
+  /**
+   * Create a pending experiment and go name it — "New experiment" (About) and "Clone experiment"
+   * (Overview, Instrument) both land here, differing only in the parts they pass.
+   *
+   * The file is created *first*, and named second, which is the inversion this whole refactor turns
+   * on: an experiment used to come into existence only at the click on Start, from a name typed on
+   * the Instrument tab, so until then there was nothing to attach a plate to or write a protocol
+   * into. Now there is a file from the outset — with a bare-date name, deliberately not a guess at
+   * what the experiment is called — and the Overview it lands on asks for the name.
+   */
+  const createExperiment = useCallback(
+    async (parts: Parameters<typeof store.createExperiment>[0], landOn: ViewId = "overview") => {
+      const id = await store.createExperiment(parts);
+      if (!id) return null;
+      store.setView(landOn);
+      setNameExperimentFor(id);
+      return id;
+    },
+    [store],
+  );
+
+  /**
+   * "Clone experiment": a new pending experiment carrying this run's protocol and plate, and
+   * nothing else.
+   *
+   * Deliberately not a copy of the file (that is `cloneActiveFile`, which every other kind still
+   * gets): a run's results are the bulk of what it holds and a second copy of them is never what
+   * was wanted — re-running the experiment is. So only the two inputs come across, and the plate
+   * comes across as *re-serialized CSV* (`plateToCsv`) rather than the archive's own bytes, which is
+   * what lets this work identically for a `.pcrd` or a Biomeme run that has no plate entry to copy.
+   */
+  const cloneExperiment = useCallback((fileName: string) => {
+    // The file to clone is named by the caller, never read from the selection: Overview means the
+    // file it is showing, and the Instrument view means the experiment *it* is pointed at, which
+    // since that view stopped being a lens on the selection need not be the selected one at all.
+    const zpcr = store.runs.get(fileName)?.zpcr;
+    if (!zpcr) return;
+    const plate = zpcr.plates(pltdPassword || undefined)[0]?.pltd.plate ?? null;
+    void createExperiment({
+      protocol: zpcr.protocolText
+        ? { runDefinition: zpcr.protocolText, name: zpcr.protocol()?.name || undefined }
+        : undefined,
+      plate: plate
+        ? {
+            name: plateCsvFileName(plate),
+            bytes: new TextEncoder().encode(plateToCsv(plate)),
+          }
+        : undefined,
+    });
+  }, [store, pltdPassword, createExperiment]);
+
+  /**
+   * Name an experiment, which also names its file.
+   *
+   * The two are one action here and nowhere else: an experiment arrives called `20260804.zpcr`, and
+   * leaving that as the file name while the run is called something else would make the file bar,
+   * the download and the instrument's own deposit disagree about which run this is. So the rename
+   * follows the convention every run's file uses (`runFileBaseName` — today's date and the name,
+   * spaces as underscores) as soon as there is a name to build it from. Only while the file still
+   * carries a name this app generated: a file renamed by hand keeps whatever it was called, since
+   * that was somebody's decision.
+   */
+  const nameExperiment = useCallback(
+    (id: string, name: string) => {
+      store.updateSettings({ experimentName: name });
+      const file = store.files.find((f) => f.name === id);
+      const trimmed = name.trim();
+      if (!file || !trimmed) return;
+      // Only the bare-date placeholder `createExperiment` writes, never a name someone chose.
+      if (!/^\d{8}$/.test(file.name.replace(/\.zpcr$/i, ""))) return;
+      void store.renameFile(id, `${runFileBaseName(trimmed)}.zpcr`);
+    },
+    [store],
+  );
+
+  /**
+   * "New protocol" on an experiment's Overview: write the default protocol into the experiment and
+   * go straight to editing it.
+   *
+   * The default is `ProtocolBuilder.empty()` — the three-line header and `END`, no steps — which is
+   * where a protocol typed from scratch starts. It goes into the experiment's *own* archive rather
+   * than into a separate `.prcl.txt` beside it: this is the "write one for this experiment" path, and
+   * a second file to keep in sync would be exactly the thing the attach menu is for when a reusable
+   * protocol is what's wanted (a protocol can still be extracted into its own file afterwards, from
+   * the Protocol tab's clone button).
+   *
+   * It is created **unnamed**, and the Protocol tab asks — the same shape as a new experiment
+   * arriving unnamed on its Overview. An earlier version asked for the file name up front, in a form
+   * inside the attach menu, which put a text field between the click and the protocol for no reason:
+   * the name isn't needed to write the first step, and the view it lands on can ask for it in place.
+   */
+  const createProtocolFor = useCallback(
+    (fileName: string) => {
+      // `setRunProtocolText` rather than `attachProtocol`: attaching derives the protocol's name from
+      // the file it came from, and this one came from no file — it must arrive *unnamed*, which is
+      // what the Protocol tab's headline then asks about.
+      store.setRunProtocolText(fileName, ProtocolBuilder.empty().toRunDefinition());
+      store.setView("protocol");
+      setNameProtocolFor(fileName);
+    },
+    [store],
+  );
+
+  /**
+   * "Start experiment": mark this experiment's own file begun, then send the run.
+   *
+   * No file is created here — the experiment already exists, which is what the pending state is for.
+   * `beginExperiment` writes the `begun` marker into it (restamping its date to today first, so an
+   * experiment cloned last week and run today is filed under today), and the id it hands back may
+   * therefore differ from the one we started with. That id is what the watcher adopts, so its first
+   * snapshot supersedes this file rather than landing beside it, and the pinned names are what keep
+   * every later snapshot on the same file.
+   *
+   * **A thermal-only run skips all of that.** It has no run folder coming
+   * (`RunPlan.producesRunFile`), so there is nothing for the watcher to adopt and nothing for a
+   * `begun` marker to mean — and the file it was started from is a `.prcl.txt`, a document rather
+   * than a record of this run, which marking would quietly rewrite. So the run is simply sent, and
+   * what comes back is the instrument's own report (core's `RunFollower`, which collects it).
+   */
+  const startExperiment = useCallback(
+    async (plan: RunPlan, fileName: string) => {
+      // Named by the caller rather than read from the selection: the Instrument view holds its own
+      // target now, and the file bar may well be pointed somewhere else entirely.
+      const id = fileName;
+      if (!id) return;
+      if (!plan.producesRunFile) {
+        runWatch.expectReportOnly();
+        return;
+      }
+      const started = await store.beginExperiment(id);
+      if (!started) return;
+      // `plan.experimentName`, never `plan.name`: the latter is the instrument's sanitized run-name
+      // operand (`My Experiment` → `My_Experiment`), which never equals what the run folder's
+      // `zpcrweb.json` says — so pinning it made every name with a space miss its own file.
+      setStartedRun({
+        experimentName: plan.experimentName,
+        fileName: started.name.replace(/\.zpcr$/i, ""),
+      });
+      runWatch.adopt(started.name, plan.experimentName);
+    },
+    [store, runWatch],
+  );
+
+  /**
+   * Copy the active file under the next free `name (N).ext` and open the copy, ready to be
+   * renamed — the Overview toolbar's Clone button, for every file kind.
+   *
+   * It goes through `addFiles` like any other new file, so the copy is validated, persisted to
+   * IndexedDB and activated by exactly the same path a dropped file takes. The bytes are
+   * `exportBytes` rather than the loaded ones, so a run's clone carries the analysis settings
+   * currently on screen (and an edited `.prcl.txt` its edits — the store keeps `bytes` current),
+   * and it lands `modified`: the copy exists nowhere but the browser until it is saved.
+   */
+  const cloneActiveFile = useCallback(async () => {
+    const file = store.active;
+    if (!file) return;
+    const bytes = store.exportBytes(file.name) ?? fileBytes(file);
+    const names = new Set(store.files.map((f) => f.name));
+    const name = cloneFileName(file.name, (candidate) => names.has(candidate));
+    const id = await store.addFiles([new File([bytes.slice()], name, { lastModified: Date.now() })], {
+      modified: true,
+    });
+    if (!id) return;
+    store.setView("overview");
+    setEditNameFor(id);
+  }, [store]);
+
+  /**
+   * The Overview toolbar's Download button, for every kind: the bytes as they'd be saved
+   * (`exportBytes` — a `.zpcr` including its `zpcrweb.json`, an edited `.prcl.txt` including its
+   * edits), under the file's own name.
+   *
+   * Saving the file to disk is also what un-modifies it: the copy leaving the browser is the one
+   * carrying the edits, so the chip's delete stops asking twice.
+   */
+  const downloadActiveFile = useCallback(() => {
+    const file = store.active;
+    if (!file) return;
+    downloadBytes(file.name, store.exportBytes(file.name) ?? fileBytes(file));
+    store.markDownloaded(file.name);
+  }, [store]);
+
+  /**
+   * What a file chip does: the one thing it always meant — *show me this file* — which is the app's
+   * primary selection, `activeName`, drawn in the bar's usual cyan. Every kind can hold it: a run, a
+   * standalone plate, and (since it has an Overview of its own) a `.prcl.txt`.
+   *
+   * It used to mean something else on the Instrument view, where the chips split into a primary run
+   * plus auxiliary protocol/plate "overrides" staged over it — the machinery a previous refactor
+   * removed (`useRunStaging`). One bar, one meaning, everywhere.
+   *
+   * **One refusal: the Instrument view while a run is on the block.** There the selection is held
+   * on the running file (`selectionLockedTo`, and the effect beside {@link instrumentExperiment}),
+   * so that view always shows what the instrument is doing; the bar greys the other chips out and
+   * this refuses the switch too, since paths other than a chip call it. It is a narrower lock than
+   * the global `activeLocked` that was removed: that one froze the bar on *every* view while a run
+   * was live, to stop the user abandoning a tab that was the only thing following the run. Nothing
+   * is abandoned now — `useRunWatch` follows a run whatever is selected — so every other tab
+   * switches freely, and this one is locked only because its subject is the run on the block.
+   *
+   * From About, picking a chip also *leaves* About for Overview. About is file-independent — it
+   * survives a selection change (see `view` below) — so without this the click would land on a
+   * page that shows nothing about the file just chosen, and look like nothing happened. Overview
+   * rather than the file's first enabled tab because every kind has one, and it is the same place
+   * every other "here is a file, go look at it" path lands.
+   */
+  const selectFile = (id: string) => {
+    if (!store.files.some((f) => f.name === id)) return;
+    if (selectionLockedTo && id !== selectionLockedTo) return;
+    store.setActive(id);
+    if (store.view === "about") store.setView("overview");
+  };
+
+  /**
+   * A file the app has been asked to go and look at, but which is still being read.
+   *
+   * Where a file lands depends on what it turns out to be ({@link defaultViewFor}) — a question
+   * only its decoded self can answer — so "open this and take me there" is two steps: remember the
+   * id, and go when it arrives. Every gesture that opens a file and follows it goes through here:
+   * a double-click in the folder tree, and the load paths that pass `goToFile`.
+   *
+   * A file that never decodes (a `.pltd` behind the password prompt, a read that failed) simply
+   * never fires this, which is the honest outcome: there is nothing to show, and the user is left
+   * where they were rather than on an empty view.
+   */
+  const [pendingLanding, setPendingLanding] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingLanding) return;
+    const f = store.loaded.find((x) => x.name === pendingLanding);
+    if (!f) return;
+    setPendingLanding(null);
+    store.setActive(f.name);
+    store.setView(defaultViewFor(f.kind, store.runs.get(f.name)?.zpcr));
+    // `store` is rebuilt every render; the identities that matter are the ones read here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingLanding, store.loaded, store.runs]);
+
+  /**
+   * Which tabs the active file supports. Computed once per file rather than per render, and
+   * before the early returns below as hook order demands: for a run this asks what the archive
+   * actually holds (`runViews`), and answering the calibration half of that decodes the run's
+   * calibration set — tens of milliseconds for a `.pcrd`, which is not a thing to repeat on every
+   * keystroke elsewhere in the app.
+   */
+  const activeViews = useMemo(
+    () => (active ? enabledViewsFor(active.kind, store.runs.get(active.name)?.zpcr) : []),
+    [active, store.runs],
+  );
+
+  /**
+   * What the attach/replace menus may offer, resolved here rather than in each view: every plate
+   * and every protocol this browser is holding, wherever it lives, minus the active file's own
+   * (see `lib/attachSources.ts`). Three views show one of these menus and they must all offer the
+   * same things, so the list is built once from the store the menus would otherwise each re-derive.
+   */
+  const plateAttachSources = useMemo(
+    () => plateSources(store.loaded, store.runs, active?.name ?? null, pltdPassword || undefined),
+    [store.loaded, store.runs, active, pltdPassword],
+  );
+  const protocolAttachSources = useMemo(
+    () => protocolSources(store.loaded, store.runs, active?.name ?? null, store.protocolFiles),
+    [store.loaded, store.runs, store.protocolFiles, active],
+  );
+  /**
+   * A row in the full files table: select the file — which **loads** it if it wasn't (see
+   * `useZpcrStore`'s `setActive`), and leaves the Files tab since `store.view` changes under it —
+   * and land on its own first enabled tab, the same "click a file, go look at it" a bar chip has
+   * always done. `view`, when given (the Plate cell's own link), overrides that landing spot
+   * instead of guessing at it.
+   *
+   * A file that isn't loaded **yet** has no decoded run to ask, so which views it supports — and
+   * therefore where it should land — isn't knowable at the moment of the click. That is the
+   * ordinary case for a double-click in the folder tree, which opens the file *and* goes to it: the
+   * read is still in flight. So the landing is deferred rather than guessed at ({@link
+   * pendingLanding}), and happens the moment the file turns up decoded.
+   *
+   * The exception is a file the app currently *can't* read (`store.unreadableIds` — a folder whose
+   * permission lapsed): the click is what asks for the access back, and until that is answered
+   * there is nothing to show. So it selects and stays, leaving the row and its badge in front of
+   * the user; a second click, once the folder is granted, goes and looks at the file like any
+   * other. Same reasoning as the folder tree below, where a click ticks a file open and stays put.
+   *
+   * The ask goes through the **folder's** own grant (`diskTree.grant`, the Grant access button's
+   * one implementation) rather than through anything file-shaped, because permission is granted
+   * per folder and never per file: one dialog answers for everything in there. So granting re-reads
+   * the folder's listings, re-arms its watches, and reads back in *every* open file inside it
+   * (`retryUnread`) — the alternative, recovering only the file that happened to be clicked, would
+   * leave its neighbours wearing an error badge that no longer describes anything true, and make
+   * the user click through a dialog-less prompt once per file to find that out.
+   */
+  const selectFromTable = (id: string, view?: ViewId) => {
+    const f = store.loaded.find((x) => x.name === id);
+    store.setActive(id);
+    if (!f && store.unreadableIds.has(id)) {
+      const source = store.files.find((e) => e.name === id)?.source;
+      if (source) void diskTree.grant(source.folder);
+      return;
+    }
+    if (view) store.setView(view);
+    else if (f) store.setView(defaultViewFor(f.kind, store.runs.get(id)?.zpcr));
+    else setPendingLanding(id);
+  };
+
+  /** The Instrument view's "Run complete" banner's "Open run" button: jump straight to that run's
+   * amplification curves, the same destination `selectFromTable` sends the Curves cell to. */
+  const openFinishedRun = useCallback(
+    (id: string) => {
+      store.setActive(id);
+      store.setView("curves");
+    },
+    [store],
+  );
+
+  const exampleHref = `#${formatLoadHash(EXAMPLE_FILE)}`;
+  const loadExample = (e: { preventDefault: () => void }) => {
+    if (window.location.hash !== exampleHref) return; // let the navigation do the work
+    e.preventDefault();
+    void store.addUrl(EXAMPLE_FILE);
+  };
+
+  /**
+   * The experiment the Instrument view acts on: **the running file while a run is on the block,
+   * else the selected file when it is a decoded run**, and otherwise nothing.
+   *
+   * The file bar is the app's one file picker, so this view needs none of its own; and when the
+   * selection isn't a run — a standalone plate or protocol, an undecoded run, nothing loaded at
+   * all — the view says so rather than showing some *other* run. Showing nothing costs nothing:
+   * connecting, reading status, opening the lid and every other instrument button live in the rail,
+   * which needs no file at all (`InstrumentRail`).
+   *
+   * The running file comes first because the view's job while a run cycles is to show that run —
+   * and the effect below keeps the selection on it while the view is showing, so the two rungs
+   * name the same file whenever anyone is looking. The memo reads the running file directly rather
+   * than waiting for the selection to catch up, so there is no render in which the view shows a
+   * different file from the one the instrument is running.
+   *
+   * Earlier versions had this resolve through as many as four rungs — a live run, a pick made in
+   * the view, the selection, the last thing resolved — each defensible on its own and adding up to
+   * a view whose subject you couldn't name by looking at the file bar. The two left are both
+   * visible there: the running file is the one lit chip that isn't greyed out.
+   */
+  const instrumentExperiment = useMemo((): InstrumentExperiment | null => {
+    /** A decoded `.zpcr`/`.pcrd` as the experiment this view would show — or null if undecoded. */
+    const runExperiment = (fileName: string, kind: FileKind): InstrumentExperiment | null => {
+      const zpcr = store.runs.get(fileName)?.zpcr;
+      if (!zpcr) return null;
+      const identity = store.experiments.get(fileName);
+      return {
+        fileName,
+        name: identity?.name ?? fileName,
+        named: identity?.named ?? false,
+        zpcr,
+        protocolText: zpcr.protocolText || null,
+        pending: isPendingExperiment(kind, zpcr),
+        // Derived from the file's own markers, so it stays true across a reload mid-run and
+        // doesn't depend on this app being the one that started it (`runFolder.ts`).
+        inProgress: runProgressFromNames(zpcr.archive.entries).inProgress,
+      };
+    };
+    // A run on the block is always a run file: a thermal-only start (a bare `.prcl.txt`) never
+    // becomes the follower's running file, since it leaves no run folder to be one.
+    if (runningFileName) {
+      const running = store.loaded.find((f) => f.name === runningFileName);
+      const experiment = running ? runExperiment(running.name, running.kind) : null;
+      if (experiment) return experiment;
+    }
+    // A standalone protocol file is startable as itself, but only when it never reads the plate.
+    // Such a run leaves the instrument's run folder untouched and so produces no `.zpcr`
+    // (`RunPlan.producesRunFile`), which is exactly why it needs no experiment file: there would
+    // be nothing to write into it. A protocol *with* a `PLATEREAD` does produce a run, and a run
+    // wants the name, plate and identity an experiment carries — so that one still goes through
+    // "New experiment" as before, and this returns nothing for it.
+    //
+    // Which encoding it arrived in makes no difference: what gets typed at the instrument is the
+    // directive text (`protocol.md` §7), and a decoded `.prcl` has exactly the same text a
+    // `.prcl.txt` does. A locked one has no text at all, so it simply isn't offered.
+    if (active && isProtocolKind(active.kind) && store.activeProtocolFile?.runDefinition) {
+      const runDefinition = store.activeProtocolFile.runDefinition;
+      const readsPlate = (() => {
+        try {
+          return parseRunDefinition(runDefinition).directives.some((d) => d.verb === "PLATEREAD");
+        } catch {
+          return true; // unreadable: don't offer to start it bare
+        }
+      })();
+      if (readsPlate) return null;
+      // Named after the file, and `named` regardless: there is no Overview field to fill in for a
+      // protocol file, and the name's only job here is to be the run's — which is what the
+      // instrument files its report under.
+      const base = splitFileName(active.name).base;
+      return {
+        fileName: active.name,
+        name: base,
+        named: !!base,
+        zpcr: null,
+        protocolText: runDefinition,
+        pending: true,
+        inProgress: false,
+      };
+    }
+    return active ? runExperiment(active.name, active.kind) : null;
+  }, [active, runningFileName, store.loaded, store.runs, store.experiments, store.activeProtocolFile]);
+
+  /**
+   * Keep the selection on the running file while the Instrument view is showing.
+   *
+   * This fires on arriving at the view mid-run and on a run starting, and it is what makes "switch
+   * to Overview, pick another file, come back to Instrument" land on the running file again: the
+   * selection moved freely on Overview, and coming back puts it where the instrument is. The bar's
+   * other chips are locked meanwhile (`selectionLockedTo`, `FileBar`'s `lockedTo`).
+   *
+   * Known consequence: a file dropped in while this view is showing a run lands in the bar but is
+   * not selected — the add selects it, and this puts the selection straight back. It is there to
+   * look at from any other tab.
+   */
+  useEffect(() => {
+    if (store.view !== "instrument" || !runningFileName) return;
+    if (store.activeName !== runningFileName) store.setActive(runningFileName);
+    // `store` is rebuilt every render; the identities that matter are the ones read here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.view, runningFileName, store.activeName]);
+
+  /**
+   * The decoded `.alf` when the selected file *is* one. Parsed here rather than inside either view
+   * because two tabs now read it — Overview's identity card and Protocol, which shows the report's
+   * own copy of what ran plus the thermal profile derived from its step log — and parsing the same
+   * file twice is how the two would drift apart.
+   *
+   * A report that no longer parses is still a file worth showing: the views fall back to the
+   * identity card and Raw, which has its bytes either way.
+   */
+  const activeReport = useMemo(() => {
+    if (active?.kind !== "alf") return null;
+    try {
+      return parseAlf(new TextDecoder("utf-8").decode(fileBytes(active)));
+    } catch {
+      return null;
+    }
+  }, [active]);
+
+
+  if (store.loading) {
+    return <div className="splash mono">initializing…</div>;
+  }
+
+  // A granted folder counts as having something, even before a file is opened out of it: the
+  // Files view is where its tree lives, and the welcome screen has nowhere to show one. The
+  // app's own bundled `samples` folder pointedly does not count — it is in that list on every
+  // browser, and treating it as "something in this browser" would mean the welcome screen never
+  // appeared again. What it offers is on the welcome screen already, as the example link.
+  const userFolders = diskTree.folders.filter((f) => f.kind !== "builtin").length;
+  if (store.files.length === 0 && userFolders === 0 && store.view !== "instrument") {
+    // Nothing in the browser at all, so About *is* the welcome screen — it carries the drop
+    // target. There's no previous view to go back to, hence no `onBack`, and no view bar: with an
+    // empty catalog even the Files tab has nothing to list.
+    //
+    // Except the Instrument tab, which is why this is not simply "no files". A cycler exists
+    // whether or not this browser is holding anything, so "connect an instrument" below leads
+    // straight there, and the ordinary chrome renders around an empty file bar.
+    return (
+      <div className="app app--empty">
+        <header className="app__brand">
+          <Logo onClick={showAbout} />
+          <span className="app__tag">Bio-Rad CFX qPCR viewer</span>
+        </header>
+        <AboutView
+          onFiles={store.addFiles}
+          exampleHref={exampleHref}
+          onLoadExample={loadExample}
+          onNewExperiment={() => void createExperiment({})}
+          onAddFolder={diskTree.supported ? () => void addFolder() : undefined}
+        />
+        <div className="app__welcomeinstrument">
+          {/* Straight to the tab that talks to the instrument, creating nothing. It used to have to
+              invent an experiment first, because the tab was a lens on a file and so unreachable
+              without one; connecting is now its own act, and the experiment to run is made from
+              inside the view if and when there is one to make. */}
+          <button className="btn" onClick={() => store.setView("instrument")}>
+            Connect an instrument over USB
+          </button>
+        </div>
+        {store.error && <ErrorBanner message={store.error} onDismiss={store.clearError} />}
+      </div>
+    );
+  }
+
+  const isStandalonePlate = !!active && isStandaloneKind(active.kind);
+  const isStandaloneProtocol = isProtocolKind(active?.kind ?? "");
+  const isStandaloneReport = active?.kind === "alf";
+  const isStandaloneLog = active?.kind === "usblog";
+  const isStandaloneFile =
+    isStandalonePlate || isStandaloneProtocol || isStandaloneReport || isStandaloneLog;
+  const zpcr = isStandaloneFile ? null : activeRun?.zpcr ?? null;
+  /** The run is here but not open yet: the password prompt, or a decode that failed. */
+  const gated = !!active && !zpcr && !isStandaloneFile;
+  /**
+   * What the view bar enables. Three cases collapse to the same empty answer, because they are
+   * the same fact — no tab has a file to be a lens on:
+   *
+   * - nothing selected (everything released, or a `#file=` this browser can't resolve);
+   * - the selected file's bytes still on their way in from IndexedDB;
+   * - a run that hasn't decoded — locked behind the password prompt, or failed.
+   *
+   * The strip itself stays in all three: the prompt is a gate in the content area, not a reason
+   * for the app's chrome to change shape, and a strip that vanished made unlocking look like the
+   * tabs were something the file had earned.
+   */
+  const enabledViews: readonly ViewId[] = activeViews;
+  // `store.view` is global (not per-file), so switching entries can land on a view this file has
+  // no answer for (e.g. "calibration" on a Biomeme run) — fall back to its first enabled tab
+  // then. The tab is drawn either way, just disabled, so this is about where the *content* goes.
+  // "about", "files" and "instrument" are all file-independent, so they survive regardless.
+  const view =
+    enabledViews.length > 0 &&
+    !FILE_INDEPENDENT_VIEWS.has(store.view) &&
+    !enabledViews.includes(store.view)
+      ? enabledViews[0]!
+      : store.view;
+
+  /**
+   * The tab strip's click, with one extra idea: **Melt is the Curves view on the melt step**.
+   * A run's melt is a single plate-read step (`meltSegments`), so choosing that tab means choosing
+   * that step — and choosing Curves means going back to the first amplification step, which is
+   * what a reader coming from the melt chart expects. The step lives in the file's own settings
+   * (`settings.step`) rather than in the tab strip, so the two can never disagree: the in-view step
+   * selector writes the same field, and whichever step is set is the one both surfaces show.
+   */
+  const selectView = (v: ViewId) => {
+    const zpcr = active ? store.runs.get(active.name)?.zpcr : undefined;
+    if (zpcr && (v === "melt" || v === "curves")) {
+      const step =
+        v === "melt" ? meltSegments(zpcr)[0]?.step : zpcr.steps()[0]?.step;
+      if (step != null) store.updateSettings({ step });
+    }
+    store.setView(v);
+  };
+
+  return (
+    <div className="app">
+      <header className="app__header" ref={headerRef} data-fit={fit}>
+        <Logo onClick={showAbout} />
+        <div className="app__views">
+          <ViewBar value={view} enabled={enabledViews} onChange={selectView} />
+        </div>
+        <div className="app__header-spacer" />
+        <DropZone
+          onFiles={store.addFiles}
+          onAddFolder={diskTree.supported ? () => void addFolder() : undefined}
+        />
+      </header>
+
+      <FileBar
+        files={store.loaded}
+        runs={store.runs}
+        plateFiles={store.plateFiles}
+        protocolFiles={store.protocolFiles}
+        activeName={store.activeName}
+        modifiedIds={store.modifiedIds}
+        inProgressIds={store.inProgressIds}
+        runningId={runningFileName}
+        incompleteIds={store.incompleteIds}
+        pendingIds={store.pendingIds}
+        onSelect={selectFile}
+        onClose={(id) => void store.closeFile(id)}
+        experiments={store.experiments}
+        lockedTo={view === "instrument" ? runningFileName : null}
+      />
+
+      <main className="app__main">
+        {/* The instrument, and the experiment *it* is pointed at — not a lens on the selected file,
+            which is why it branches out here beside Files rather than inside the block below that
+            needs one (see `ViewBar`). It renders with nothing selected, and with nothing loaded at
+            all: someone with a cycler and no files can connect, watch, and start a run whose file
+            they make from here. */}
+        {view === "instrument" ? (
+          <InstrumentView
+            onOpenRun={openRun}
+            onOpenFile={openInstrumentFile}
+            onOpenReport={openReport}
+            onOpenFinishedRun={openFinishedRun}
+            experiment={instrumentExperiment}
+            // Creating one selects it, which is the second rung — so it lands on screen here with
+            // nothing extra to tell this view about it.
+            onNewExperiment={() => void createExperiment({}, "instrument")}
+            instrument={instrument}
+            runWatch={runWatch}
+            runningFile={runningFileName}
+            onStartExperiment={startExperiment}
+            onCloneExperiment={cloneExperiment}
+          />
+        ) : view === "files" ? (
+          <FilesTableView
+            files={store.files}
+            activeName={store.activeName}
+            modifiedIds={store.modifiedIds}
+            unreadableIds={store.unreadableIds}
+            runs={store.runs}
+            plateFiles={store.plateFiles}
+            protocolFiles={store.protocolFiles}
+            experiments={store.experiments}
+            onSelectFile={selectFromTable}
+            onCloseFile={store.closeFile}
+            onClose={leaveFiles}
+            tree={diskTree}
+            // Reading a file off disk selects it. `goToFile` also goes and looks at it, on the view
+            // that kind of file is *for* — curves for a run, the plate map for a plate — since the
+            // file has been decoded by then and can be asked. The promise comes back so that a
+            // double-click in the folder tree can wait for its own first click to finish opening
+            // the file before following it there.
+            onAddDiskFiles={(sources, goToFile) =>
+              store.addDiskFiles(sources).then((name) => {
+                if (goToFile && name) setPendingLanding(name);
+              })
+            }
+            // A sample is fetched rather than read off disk, and lands as an ordinary copy — but
+            // the gesture is the same one, so it ends the same way: selected, and on that file's
+            // own default view if the user asked to go there.
+            onAddSampleFiles={async (names, goToFile) => {
+              let last: string | null = null;
+              for (const name of names) last = await store.addUrl(sampleUrl(name));
+              if (goToFile && last) setPendingLanding(last);
+            }}
+            // A repository's file is fetched from GitHub and lands as a copy too — same gesture,
+            // same ending (`state/githubRepos.ts`).
+            onAddGithubFiles={(sources, goToFile) =>
+              store.addGithubFiles(sources).then((name) => {
+                if (goToFile && name) setPendingLanding(name);
+              })
+            }
+          />
+        ) : view === "about" ? (
+          <AboutView
+            onFiles={store.addFiles}
+            exampleHref={exampleHref}
+            onLoadExample={loadExample}
+            onNewExperiment={() => void createExperiment({})}
+            onBack={leaveAbout}
+          />
+        ) : !active || !settings ? (
+          // Files exist but none is selected — every file released, or a `#file=` naming one this
+          // browser doesn't have. The chrome stays exactly as it is (view bar disabled but for
+          // Files, file bar, drop zone, About), because the way out is to pick a file, and this
+          // says where from.
+          <div className="app__noselection mono">
+            {store.activeName && store.loadingIds.has(store.activeName) ? (
+              "opening…"
+            ) : store.awaitingGrant ? (
+              // A link to a file in a folder this browser has been granted, on a load where the
+              // browser has taken the grant back — the usual state after a reload. The app cannot
+              // ask for it here: a permission prompt needs a click, and arriving on a link isn't
+              // one. So it says which folder, and hands over the button that gets there.
+              <>
+                <p>{store.awaitingGrant.file}</p>
+                <p>
+                  This file is in the <strong>{store.awaitingGrant.folder}</strong> folder. Grant
+                  access to that folder and it will open.
+                </p>
+                <p>
+                  <button type="button" className="btn" onClick={() => store.setView("files")}>
+                    Go to Files
+                  </button>
+                </p>
+              </>
+            ) : (
+              <>
+                <p>No file selected.</p>
+                <p>
+                  Choose one from the file bar, or open the <strong>Files</strong> tab to see
+                  everything this browser is holding.
+                </p>
+              </>
+            )}
+          </div>
+        ) : isStandalonePlate ? (
+          <>
+            {view === "overview" && store.activePlateFile && (
+              <StandalonePlateOverviewView
+                file={active}
+                result={store.activePlateFile}
+                onRenameFile={(name) => void store.renameFile(active.name, name)}
+                onDownload={downloadActiveFile}
+                onClone={() => void cloneActiveFile()}
+                autoEditName={editNameFor === active.name}
+                onAutoEditHandled={clearEditName}
+              />
+            )}
+            {view === "plates" && store.activePlateFile && (
+              <StandalonePlateView
+                key={active.name}
+                file={active}
+                result={store.activePlateFile}
+                // Only a `.plt.csv` can be written back — see the store's `setPlateText`. A
+                // `.pltd` gets the same view with no editor rather than an editor that couldn't
+                // save.
+                onChangePlate={
+                  active.kind === "platecsv"
+                    ? (plate) => store.setPlateText(active.name, plate)
+                    : undefined
+                }
+              />
+            )}
+            {view === "raw" && <StandaloneRawView key={active.name} file={active} />}
+          </>
+        ) : isStandaloneProtocol ? (
+          <>
+            {view === "overview" && (
+              <StandaloneProtocolOverview
+                file={active}
+                onRenameFile={(name) => void store.renameFile(active.name, name)}
+                onDownload={downloadActiveFile}
+                onClone={() => void cloneActiveFile()}
+                autoEditName={editNameFor === active.name}
+                onAutoEditHandled={clearEditName}
+              />
+            )}
+            {view === "protocol" &&
+              store.activeProtocolFile !== null &&
+              // A Bio-Rad `.prcl` is an encrypted container, so its protocol may not be readable
+              // yet. The prompt sits where the protocol would be — the same place, and the same
+              // component, a locked `.pltd` puts it on the Plates tab.
+              (store.activeProtocolFile.needsPassword || store.activeProtocolFile.error ? (
+                <div className="decoded">
+                  <PasswordPrompt
+                    wrong={!!store.activeProtocolFile.error}
+                    onSubmit={setPassword}
+                  />
+                </div>
+              ) : (
+                <ProtocolView
+                  key={active.name}
+                  protocolText={store.activeProtocolFile.runDefinition}
+                  // Only Bio-Rad's own form carries a structured step list; a `.prcl.txt` is the
+                  // directive text and nothing else, and gets the annotated listing instead.
+                  steps={store.activeProtocolFile.protocol?.steps ?? null}
+                  file={active}
+                  protocolSources={protocolAttachSources}
+                  addFiles={store.addFiles}
+                  // A `.prcl.txt` is always a draft: a document you author, with no run behind it
+                  // that editing it could contradict. A `.prcl` is a draft too, but this app can
+                  // only read that container, never write one — so it is shown, not edited, for
+                  // the same reason a `.pltd`'s plate grid has no pencil on it.
+                  editable={active.kind === "prcltxt"}
+                  onChangeProtocol={(text) => store.setProtocolText(active.name, text)}
+                  // A standalone protocol has no `ProtocolName.txt` — its name *is* its file name,
+                  // so the headline edits that, extension preserved.
+                  name={splitFileName(active.name).base}
+                  onRenameProtocol={(name) =>
+                    void store.renameFile(active.name, `${name}${splitFileName(active.name).ext}`)
+                  }
+                  autoFocusName={nameProtocolFor === active.name}
+                  onAutoFocusHandled={clearNameProtocol}
+                />
+              ))}
+            {view === "raw" && <StandaloneRawView key={active.name} file={active} />}
+          </>
+        ) : isStandaloneReport ? (
+          <>
+            {view === "overview" && (
+              <StandaloneReportOverview
+                file={active}
+                report={activeReport}
+                onRenameFile={(name) => void store.renameFile(active.name, name)}
+                onDownload={downloadActiveFile}
+                onClone={() => void cloneActiveFile()}
+                autoEditName={editNameFor === active.name}
+                onAutoEditHandled={clearEditName}
+              />
+            )}
+            {view === "protocol" && (
+              <ProtocolView
+                key={active.name}
+                // The report's own copy of the protocol, which is the one that ran — see
+                // `executed` below for why that distinction is drawn in the view.
+                protocolText={activeReport?.runDefinition || null}
+                report={activeReport}
+                executed
+                file={active}
+                protocolSources={protocolAttachSources}
+                addFiles={store.addFiles}
+                // A report is a record of a run that already happened; there is nothing here to
+                // edit, and so no protocol to attach either.
+                editable={false}
+                onChangeProtocol={() => {}}
+                // The instrument files a run under a name, and that name is the protocol's as far
+                // as the report knows. Never editable, so the rename callback is never reached.
+                name={activeReport?.header.runName ?? ""}
+                onRenameProtocol={() => {}}
+              />
+            )}
+            {view === "raw" && <StandaloneRawView key={active.name} file={active} />}
+          </>
+        ) : isStandaloneLog ? (
+          view === "raw" && <StandaloneRawView key={active.name} file={active} />
+        ) : !zpcr ? (
+          <div className="app__gate">
+            {activeRun?.needsPassword && (
+              <PasswordPrompt wrong={false} onSubmit={setPassword} />
+            )}
+            {activeRun?.error && (
+              <PasswordPrompt wrong={true} onSubmit={setPassword} />
+            )}
+          </div>
+        ) : (
+          <>
+            {view === "overview" && (
+              <OverviewView
+                zpcr={zpcr}
+                file={active}
+                run={activeRun!}
+                settings={settings}
+                identity={
+                  store.experiments.get(active.name) ?? {
+                    name: active.name,
+                    named: false,
+                    date: null,
+                    dateText: "",
+                    fileName: active.name,
+                  }
+                }
+                // Naming an experiment also names its file while it still carries the placeholder
+                // one it was created under — see `nameExperiment`.
+                onRename={(name) => nameExperiment(active.name, name)}
+                // Only a `.zpcr` has an archive to write `zpcrweb.json` into; see
+                // `analysisPersist.ts`'s `resolve`.
+                namePersists={active.kind === "zpcr"}
+                pending={isPendingExperiment(active.kind, zpcr)}
+                isRunningFile={active.name === runningFileName}
+                plateSources={plateAttachSources}
+                protocolSources={protocolAttachSources}
+                onAttachPlate={(file) => void store.attachPlate(active.name, file)}
+                onAttachProtocol={(file) => void store.attachProtocol(active.name, file)}
+                onCreateProtocol={() => createProtocolFor(active.name)}
+                onCloneExperiment={() => cloneExperiment(active.name)}
+                onGoToInstrument={() => store.setView("instrument")}
+                onRenameFile={(name) => void store.renameFile(active.name, name)}
+                onDownload={downloadActiveFile}
+                autoEditName={editNameFor === active.name}
+                onAutoEditHandled={clearEditName}
+                autoFocusName={nameExperimentFor === active.name}
+                onAutoFocusHandled={clearNameExperiment}
+              />
+            )}
+            {view === "protocol" && (
+              <ProtocolView
+                protocolText={zpcr.protocolText || null}
+                steps={zpcr.protocol()?.steps ?? null}
+                // One report per archive (`alf.md` §1); the first is the run's own. Only a run that
+                // executed has one, which is what the thermal-profile section is about.
+                report={zpcr.runReports()[0]?.alf ?? null}
+                file={active}
+                protocolSources={protocolAttachSources}
+                addFiles={store.addFiles}
+                editable={isPendingExperiment(active.kind, zpcr)}
+                onChangeProtocol={(text) => store.setRunProtocolText(active.name, text)}
+                // The same `attachProtocol` the Overview tab's "replace protocol" calls — the view
+                // itself only offers it while the experiment is still pending.
+                onAttachProtocol={(file) => void store.attachProtocol(active.name, file)}
+                name={zpcr.protocol()?.name ?? ""}
+                onRenameProtocol={(name) => void store.setRunProtocolName(active.name, name)}
+                autoFocusName={nameProtocolFor === active.name}
+                onAutoFocusHandled={clearNameProtocol}
+              />
+            )}
+            {(view === "curves" || view === "melt") && (
+              <CurvesView
+                zpcr={zpcr}
+                settings={settings}
+                onChange={store.updateSettings}
+              />
+            )}
+            {view === "calibration" && (
+              <CalibrationView
+                zpcr={zpcr}
+                settings={settings}
+                onChange={store.updateSettings}
+              />
+            )}
+            {view === "reference" && (
+              <ReferenceView
+                zpcr={zpcr}
+                settings={settings}
+                onChange={store.updateSettings}
+              />
+            )}
+            {view === "plates" && (
+              <PlatesView
+                key={active.name}
+                zpcr={zpcr}
+                fileName={active.name}
+                attachPlate={store.attachPlate}
+                setRunPlateText={store.setRunPlateText}
+                plateSources={plateAttachSources}
+                addFiles={store.addFiles}
+              />
+            )}
+            {view === "raw" && active.kind === "pcrd" && (
+              <PcrdRawView
+                key={active.name}
+                zpcr={zpcr}
+                documentXml={activeRun?.documentXml ?? ""}
+                fileName={active.name}
+              />
+            )}
+            {view === "raw" && active.kind === "zpcr" && (
+              <RawFilesView key={active.name} zpcr={zpcr} settings={settings} />
+            )}
+            {/* A Biomeme run is a single JSON document rather than an archive, which is exactly
+                the shape the standalone viewer handles. */}
+            {view === "raw" && active.kind === "biomeme" && (
+              <StandaloneRawView key={active.name} file={active} />
+            )}
+          </>
+        )}
+      </main>
+
+      {store.error && <ErrorBanner message={store.error} onDismiss={store.clearError} />}
+    </div>
+  );
+}

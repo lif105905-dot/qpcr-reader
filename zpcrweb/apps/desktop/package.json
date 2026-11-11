@@ -1,0 +1,53 @@
+{
+  "name": "@zpcrweb/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Desktop shell for the zpcrweb qPCR reader",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac --dir"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "local.qpcr-reader",
+    "productName": "qPCR Reader",
+    "directories": {
+      "output": "out",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web-dist"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "identity": "-",
+      "target": [
+        "dir"
+      ],
+      "extendInfo": {
+        "CFBundleName": "qPCR Reader",
+        "CFBundleDisplayName": "qPCR 读取器",
+        "NSHumanReadableCopyright": "GPL-3.0-or-later · 基于 zpcrweb"
+      }
+    },
+    "electronVersion": "33.4.11",
+    "electronDist": "/Users/lijiehui/Documents/qpcr-tool/electron-dist",
+    "asar": true
+  },
+  "author": "local build",
+  "dependencies": {
+    "app-builder-bin": "^4.2.0"
+  }
+}

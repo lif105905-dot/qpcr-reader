@@ -1,0 +1,622 @@
+/**
+ * The command language, answered statefully — `emulator.md` §3–§5, `usb.md` §3.
+ *
+ * One method, {@link EmulatedInstrument.handle}, takes a command line and returns the reply the
+ * instrument would give. Everything the client can ask about is derived from state that a run
+ * actually moves: `STATUS?`'s twenty fields come out of {@link EmulatedRun.observe}, the listing
+ * pair comes out of {@link EmulatorFilesystem}, and the identity block is a table.
+ *
+ * **Two response shapes, and which one a command uses is a property of the command** (`usb.md`
+ * §3): a query with something to report separates its value from the code with a semicolon, even
+ * when the value is empty (`ERRORLIST A` → `;0000`), while a pure action command answers the bare
+ * `0000` with no separator at all. Getting that wrong is invisible in a log and breaks
+ * `parseResponse`, so the two are spelled as {@link value} and {@link ok} here and never mixed.
+ *
+ * **This emulator is never more permissive than the instrument.** A command the real one rejects
+ * has to be rejected here, or the client grows a dependency on leniency that fails in the lab —
+ * so `RemoteRun`'s operands are type-checked as §7.3 describes them, and anything unrecognised
+ * answers a failure code rather than a cheerful `0000`. Where the real instrument's answer is
+ * unknown, the failure is this emulator's invention and `emulator.md` Appendix A says so.
+ */
+import { OK_CODE } from "../commands.js";
+import { cfxFileCrc } from "../crc.js";
+import { CFX_CURRENT_RUN_DIR, CFX_RUN_REPORT_DIR } from "../runPlan.js";
+import { LID_CLOSING_MS, LID_OPENING_MS } from "./schedule.js";
+import { isRunDefinitionVerb } from "../../runDefinition.js";
+import type { EmulatorClock } from "./clock.js";
+import type { EmulatorRunData } from "./data.js";
+import { EmulatorFilesystem, FILE_MISSING } from "./filesystem.js";
+import { mangleRunName } from "./report.js";
+import { AMBIENT_C, EmulatedRun, type RunRequest, type RunSnapshot, type Temperatures } from "./run.js";
+import type { EmulatorReply } from "./transport.js";
+
+/**
+ * The failure code this emulator answers with. **Invented**: neither reference capture nor any
+ * live session has ever provoked a non-zero code, so what a real rejection looks like beyond
+ * "not `0000`" is unknown (`usb.md` §3). It is deliberately not `0000` so that a client relying
+ * on leniency fails here rather than in the lab.
+ */
+const FAIL_CODE = "0001";
+const REAL_TIME_DATA_DIR = "\\Storage Card\\Real-Time Data";
+const LOGS_DIR = "\\Storage Card\\Logs";
+
+/** The static identification block (`usb.md` §3), defaulting to the committed CT019138 strings. */
+export interface EmulatorIdentity {
+  manufacturer: string;
+  model: string;
+  /** The base-unit serial — `*IDN?`'s third field, `BASESN?`, and the `.alf`'s filename. */
+  serial: string;
+  firmware: string;
+  frontEndSoftware: string;
+  /** `ALPHASN?` — the block's own serial, distinct from the base unit's. */
+  alphaSerial: string;
+  alphaId: string;
+  blockDescription: string;
+  cpld: string;
+  lidVersion: string;
+  lidBVersion: string;
+}
+
+export const DEFAULT_IDENTITY: EmulatorIdentity = {
+  manufacturer: "BIO-RAD LABORATORIES",
+  model: "C1000",
+  serial: "CT019138",
+  firmware: "2.0.231.0",
+  frontEndSoftware: "1.102.548.801",
+  alphaSerial: "RN050773",
+  alphaId: "4",
+  blockDescription: '"96FX"',
+  cpld: "B",
+  lidVersion: "54",
+  lidBVersion: "236",
+};
+
+const ENCODER = new TextEncoder();
+const LATIN1 = new TextDecoder("latin1");
+
+/** A pure action command's reply: the bare code, no separator (`usb.md` §3). */
+function ok(code = OK_CODE): EmulatorReply {
+  return { payload: ENCODER.encode(code) };
+}
+
+/** A query's reply: `<value>;<code>`, the separator kept even for an empty value. */
+function value(v: string, code = OK_CODE): EmulatorReply {
+  return { payload: ENCODER.encode(`${v};${code}`) };
+}
+
+/** A `passThrough` reply — raw bytes rather than text (`usb.md` §2). */
+function binary(bytes: Uint8Array): EmulatorReply {
+  return { payload: bytes, passThrough: true };
+}
+
+const fail = () => ok(FAIL_CODE);
+
+/** Strip the quotes an operand or a path may arrive wrapped in. */
+function unquote(v: string): string {
+  return v.trim().replace(/^"|"$/g, "");
+}
+
+export interface EmulatedInstrumentOptions {
+  clock: EmulatorClock;
+  data?: EmulatorRunData | null;
+  identity?: Partial<EmulatorIdentity>;
+  /** What `\Storage Card\CurrentRun` already holds — usually the *previous* run (`usb.md` §7.5). */
+  initialRunFolder?: Record<string, Uint8Array> | null;
+  /**
+   * Files already on the instrument anywhere else, keyed by full path — what a session wants
+   * `Real-Time Data` or `Logs` to hold, since the emulator never writes into either itself. The
+   * directory must be one the instrument has.
+   */
+  initialFiles?: Record<string, Uint8Array> | null;
+  /** The wall-clock instant simulated time zero corresponds to, for the files' own timestamps. */
+  startedAt?: Date;
+  /**
+   * Where the block and lid sit before any run — ambient by default. An instrument whose last run
+   * ended a while before the emulator started has a lid still warm, which shortens the first
+   * preheat (`usb.md` §7.3); a replay seeds this from its recording. Held, not cooled: how fast a
+   * lid cools that has been sitting for an unknown time is not something to invent.
+   */
+  temperatures?: Partial<Temperatures>;
+}
+
+export class EmulatedInstrument {
+  readonly identity: EmulatorIdentity;
+  readonly fs: EmulatorFilesystem;
+  private readonly clock: EmulatorClock;
+  private readonly data: EmulatorRunData | null;
+  private readonly startedAt: Date;
+
+  /** The protocol currently typed in, one directive per entry (`usb.md` §7.2). */
+  private authored: string[] = [];
+  private run: EmulatedRun | null = null;
+  /** The last run released, kept for one thing: the block and lid it left behind, which cool
+   * toward ambient rather than snapping there (`usb.md` §7.6) and are where the next run starts. */
+  private previousRun: EmulatedRun | null = null;
+  /** Block and lid before the first run — see {@link EmulatedInstrumentOptions.temperatures}. */
+  private readonly resting: Temperatures;
+  /** Where the lid is going, and when it gets there: field 17 reads `OPENING`/`CLOSING` on the
+   * way (measured, `usb.md` §3.2 — a motorised lid takes seconds, and a client that waits for
+   * `OPEN` after `LID OPEN` sees the intermediate state first). */
+  private lidTarget: "OPEN" | "CLOSED" = "CLOSED";
+  private lidMovingUntilMs = 0;
+  private volumeUl = 10;
+  private hotLidOperand = "105,30";
+  private guidCounter = 0;
+  /** Every `SetDateTime` argument received, oldest first — what a test checks a client sent. */
+  readonly clockSettings: string[] = [];
+
+  constructor(options: EmulatedInstrumentOptions) {
+    this.clock = options.clock;
+    this.data = options.data ?? null;
+    this.identity = { ...DEFAULT_IDENTITY, ...options.identity };
+    this.startedAt = options.startedAt ?? new Date();
+    this.resting = {
+      blockC: options.temperatures?.blockC ?? AMBIENT_C,
+      lidC: options.temperatures?.lidC ?? AMBIENT_C,
+    };
+    this.fs = new EmulatorFilesystem([
+      "\\Storage Card",
+      CFX_CURRENT_RUN_DIR,
+      CFX_RUN_REPORT_DIR,
+      // Holds a `<run>.zpcr` and a `<run>.txt` per completed run on the real instrument — CFX
+      // Manager lists and downloads them (`usb.md` §5, measured in the `usb-basic` capture).
+      // Nothing the emulator does writes into it: when the instrument does is unwitnessed
+      // (`emulator.md` §11), and inventing that would be inventing evidence. It holds what
+      // `initialFiles` puts there, and nothing more.
+      REAL_TIME_DATA_DIR,
+      // Five instrument logs (`DebugLog.txt`, `SystemUsageLog.txt`, …) on the real one, same
+      // capture. Only ever `initialFiles`', for the same reason.
+      LOGS_DIR,
+    ]);
+    for (const [name, bytes] of Object.entries(options.initialRunFolder ?? {})) {
+      this.fs.write(`${CFX_CURRENT_RUN_DIR}\\${name}`, bytes);
+    }
+    for (const [path, bytes] of Object.entries(options.initialFiles ?? {})) {
+      this.fs.seed(path, bytes);
+    }
+  }
+
+  /** The run in progress or being held, for a caller that wants to look. */
+  get currentRun(): EmulatedRun | null {
+    return this.run;
+  }
+
+  // ---- dispatch ---------------------------------------------------------
+
+  handle(command: string, payload: Uint8Array): EmulatorReply | null {
+    const line = command.trim();
+    // Every reply is answered from the same instant, and the run folder is brought up to date
+    // first — so a listing and the `STATUS?` beside it can never disagree about whether a plate
+    // read exists yet.
+    const now = this.clock.now();
+    this.advance(now);
+
+    const [verb = "", rest = ""] = splitVerb(line);
+    const upper = verb.toUpperCase();
+
+    if (upper === "STATUS?") return this.status();
+    if (upper === "RTSTATUS?") return this.rtStatus();
+    if (upper === "ERRORLIST") return value("");
+
+    const identity = this.identityReply(line);
+    if (identity) return identity;
+
+    const file = this.fileCommand(upper, rest, payload);
+    if (file) return file;
+
+    const control = this.runCommand(upper, rest, now);
+    if (control) return control;
+
+    // Anything left that is a protocol directive is authoring (`usb.md` §7.2). Checked last so
+    // that `VOLUME?` reaches the query table above and `VOLUME 25` reaches this.
+    if (isRunDefinitionVerb(upper)) return this.author(line, upper, rest);
+
+    switch (upper) {
+      case "PROTOCOL":
+        // Not a lookup — there is no stored-protocol library (`usb.md` §5.1). It names the
+        // protocol being typed into the one slot the instrument has, so it clears that slot.
+        this.authored = [];
+        return ok();
+      case "LID": {
+        const target = /^OPEN$/i.test(rest) ? "OPEN" : /^CLOSE$/i.test(rest) ? "CLOSED" : null;
+        if (target === null) return fail();
+        if (target !== this.lidTarget) {
+          this.lidTarget = target;
+          this.lidMovingUntilMs = now + (target === "OPEN" ? LID_OPENING_MS : LID_CLOSING_MS);
+        }
+        return ok();
+      }
+      case "BLOCKID":
+      case "TESTMODE":
+      case "SETAPILOGLEVEL":
+      case "FRONTENDLOCKED":
+        return ok();
+      case "SETDATETIME":
+        // The one command that looks like an action and isn't: it reports success as a value.
+        // What a malformed argument gets is unwitnessed (`emulator.md` §11); this accepts anything.
+        this.clockSettings.push(rest.trim());
+        return value("True");
+      default:
+        return fail();
+    }
+  }
+
+  // ---- status -----------------------------------------------------------
+
+  /** Field 17 at `now`. */
+  private lidState(now: number): string {
+    if (now < this.lidMovingUntilMs) return this.lidTarget === "OPEN" ? "OPENING" : "CLOSING";
+    return this.lidTarget;
+  }
+
+  /** Bring the run's files up to `now`, and drop the run once its acknowledgement has released it
+   * — which is `RELEASE_MS` after the `CANCEL`, not at it (`usb.md` §7.6). */
+  private advance(now: number): void {
+    const run = this.run;
+    if (!run) return;
+    run.materialise(now);
+    if (run.isReleased(now)) {
+      this.previousRun = run;
+      this.run = null;
+    }
+  }
+
+  /** The block and lid with no run on the block: ambient, or still cooling from the last run. */
+  private idleTemperatures(now: number): Temperatures {
+    return this.previousRun?.temperaturesAt(now) ?? this.resting;
+  }
+
+  private snapshot(now: number): RunSnapshot | null {
+    const snap = this.run?.observe(now) ?? null;
+    return snap && snap.visible ? snap : null;
+  }
+
+  private status(): EmulatorReply {
+    // The accelerated clock moves here and nowhere else: the host asking what is happening is
+    // what makes the next thing happen (`emulator.md` §6).
+    const before = this.clock.now();
+    const runEvent = this.run?.observe(before).nextEventAtMs ?? null;
+    const lidEvent = this.lidMovingUntilMs > before ? this.lidMovingUntilMs : null;
+    this.clock.poll(
+      runEvent === null ? lidEvent : lidEvent === null ? runEvent : Math.min(runEvent, lidEvent),
+    );
+    const now = this.clock.now();
+    this.advance(now);
+    const snap = this.snapshot(now);
+
+    if (!snap) {
+      const idle = this.idleTemperatures(now);
+      return value(
+        [
+          idle.blockC.toFixed(2),
+          idle.lidC.toFixed(1),
+          "0",
+          "0",
+          "IDLE",
+          "0",
+          '"",BLOCK,OFF',
+          "0",
+          "0.00",
+          "0.00",
+          "0.00",
+          "0.00",
+          "0.00",
+          "0",
+          "0",
+          "0",
+          // Field 16 reads the block back at idle — 53.72 beside a 53.72 block, measured just
+          // after a run, so it cools with it.
+          idle.blockC.toFixed(2),
+          this.lidState(now),
+          "0",
+        ].join(";"),
+      );
+    }
+
+    const run = this.run!;
+    // Field 7, the status register (`usb.md` §3.2). Flags, not an enumeration.
+    let flags = 0;
+    if (snap.finished) {
+      flags = 0x20 | (snap.cancelled ? 0x80 : 0);
+    } else {
+      flags = 0x20 | 0x40;
+      if (snap.preheating) flags |= 0x08;
+      if (snap.atTarget) flags |= 0x01;
+      if (snap.paused) flags |= 0x02;
+    }
+    const descriptor = `"${reportedRunName(run.request.name)}",${run.request.method},${
+      snap.finished ? "OFF" : run.request.lidOn ? "ON" : "OFF"
+    }`;
+    return value(
+      [
+        snap.blockTempC.toFixed(2),
+        snap.lidTempC.toFixed(1),
+        // Field 2 is the loop's total, known only once its `GOTO` has executed; field 3 the pass
+        // (`usb.md` §3.2 — `1;1` through a `GOTO 2,44` loop's first cycle, `45;23` in its 23rd).
+        String(snap.finished ? 0 : snap.cycles),
+        String(snap.finished ? 0 : snap.cycle),
+        snap.stepText,
+        String(snap.finished ? 0 : snap.stepNumber),
+        descriptor,
+        String(flags),
+        snap.elapsedS.toFixed(2),
+        // Field 9 is nominally the whole step, ramp included, but on a CFX96 it reads the hold —
+        // within 0.01 s of field 12 in every sample of both recordings (`usb.md` §3.2).
+        snap.holdElapsedS.toFixed(2),
+        snap.remainingS.toFixed(2),
+        snap.rampElapsedS.toFixed(2),
+        snap.holdElapsedS.toFixed(2),
+        snap.paused ? "1" : "0",
+        "0",
+        String(snap.stepCount),
+        snap.sampleTempC.toFixed(2),
+        this.lidState(now),
+        "0",
+      ].join(";"),
+    );
+  }
+
+  /** `RTSTATUS?` — the optical head's shuttle and ambient temperatures, and an empty fault list
+   * (`usb.md` §3.3). The shuttle climbs during the run's warm-up alongside the lid and settles
+   * around 45 °C; the empty third field is the healthy reading, not a truncation. */
+  private rtStatus(): EmulatorReply {
+    const snap = this.snapshot(this.clock.now());
+    const shuttle = snap ? (snap.preheating ? 30 : 45.2) : 18.31;
+    return value(`${shuttle.toFixed(2)};26;`);
+  }
+
+  // ---- the identity block ----------------------------------------------
+
+  private identityReply(line: string): EmulatorReply | null {
+    const id = this.identity;
+    const table: Record<string, string> = {
+      "*IDN?": `${id.manufacturer},${id.model},${id.serial},${id.firmware}`,
+      "SOFTWARE?": id.firmware,
+      "FrontEndSoftware?": id.frontEndSoftware,
+      "BASESN?": id.serial,
+      "ALPHASN?": id.alphaSerial,
+      "ALPHAID?": id.alphaId,
+      "BLOCKDESC?": id.blockDescription,
+      "BLOCKCOUNT?": "1",
+      "CPLD?": id.cpld,
+      "DEVICES?": "0",
+      "VOLUME?": String(this.volumeUl),
+      "WORKING?": "True",
+      "BOOTMODE?": "False",
+      "SELFTEST?": "0",
+      "ENABLERT?": "0",
+      "ERRORS?": "0",
+      GETSIPOSTERRORS: "true;",
+      "SUPERLOCKDOWNMODE?": "OFF",
+      GETFREESPACE: "4018397184",
+      GETTOTALRAM: "96014336",
+      "NAME?": `"${this.run ? reportedRunName(this.run.request.name) : ""}"`,
+      "LIDFORCE?": "AUTO",
+      "LIDVERSION?": id.lidVersion,
+      "LIDBVERSION?": id.lidBVersion,
+      "GETPOS?": "0",
+      "PAUSE?": this.run?.isPaused ? "True" : "False",
+    };
+    for (const [command, reply] of Object.entries(table)) {
+      if (line.toUpperCase() === command.toUpperCase()) return value(reply);
+    }
+    return null;
+  }
+
+  // ---- filesystem -------------------------------------------------------
+
+  private fileCommand(verb: string, rest: string, payload: Uint8Array): EmulatorReply | null {
+    switch (verb) {
+      case "GETFILESLEN": {
+        const answer = this.fs.getFilesLen(unquote(rest));
+        return answer.kind === "length" ? value(String(answer.value)) : binary(answer.bytes);
+      }
+      case "LISTALLFILES":
+        // The measured quirk, reproduced deliberately: whatever the last GETFILESLEN buffered,
+        // *ignoring the path given here* (`usb.md` §5).
+        return value(this.fs.listAllFiles());
+      case "GETFILESIZE": {
+        const bytes = this.fs.read(unquote(rest));
+        return bytes ? value(String(bytes.length)) : fail();
+      }
+      case "GETFILE": {
+        const bytes = this.fs.read(unquote(rest));
+        // The file and nothing else — no trailing `;0000` (`usb.md` §5).
+        return bytes ? binary(bytes) : fail();
+      }
+      case "DELFILE":
+        // A missing file is not an error: a first upload to a clean directory always gets this
+        // (`usb.md` §7.4).
+        return this.fs.delete(unquote(rest)) ? ok() : binary(FILE_MISSING);
+      case "CRCSENDFILE":
+        return this.receiveFile(payload);
+      case "COMPUTEFILECRC": {
+        // Despite the name it returns no CRC: it hands back the GUID name the device stored the
+        // just-uploaded file under (`usb.md` §5, step 3).
+        const stored = this.fs.stagedPath;
+        return stored && this.fs.read(unquote(rest)) ? value(stored) : fail();
+      }
+      case "GETFILECRC": {
+        const bytes = this.fs.read(unquote(rest));
+        // Recomputed over what was actually stored, never echoed back — a corrupted upload has
+        // to be able to disagree with the checksum that announced it.
+        return bytes ? value(String(cfxFileCrc(bytes))) : fail();
+      }
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * `CRCSENDFILE "<crc>*<path>",<raw bytes>` — the one command whose payload is not all text, so
+   * it is parsed out of the raw message rather than the decoded line (`usb.md` §5).
+   */
+  private receiveFile(payload: Uint8Array): EmulatorReply {
+    const head = LATIN1.decode(payload.slice(0, 512));
+    const match = /^CRCSENDFILE "(\d+)\*([^"]*)",/.exec(head);
+    if (!match) return fail();
+    const path = match[2]!;
+    const bytes = payload.slice(ENCODER.encode(match[0]!).length);
+    this.guidCounter++;
+    // Deterministic rather than random: an emulated session should replay identically.
+    const guid = `0e72e6e2-5b85-4d00-b08a-${String(this.guidCounter).padStart(12, "0")}`;
+    this.fs.receive(path, bytes, guid);
+    return ok();
+  }
+
+  // ---- authoring and run control ---------------------------------------
+
+  private author(line: string, verb: string, rest: string): EmulatorReply {
+    if (verb === "HOTLID") this.hotLidOperand = rest.trim();
+    if (verb === "VOLUME") {
+      const n = Number(rest.trim());
+      if (!Number.isFinite(n)) return fail();
+      this.volumeUl = n;
+    }
+    this.authored.push(line);
+    return ok();
+  }
+
+  private runCommand(verb: string, rest: string, now: number): EmulatorReply | null {
+    switch (verb) {
+      case "REMOTERUN":
+        return this.remoteRun(rest, now);
+      case "ADDCYCLES": {
+        // `ADDCYCLES 0` is what a run's setup sends, and it is a no-op. Extending a *running*
+        // protocol's loop is deliberately not modelled, and rejecting says so rather than
+        // pretending it worked (`emulator.md` §8).
+        return rest.trim() === "0" ? ok() : fail();
+      }
+      case "PROCEED":
+        this.run?.proceed(now);
+        return ok();
+      case "PAUSE":
+        this.run?.pause(now);
+        return ok();
+      case "RESUME":
+        this.run?.resume(now);
+        return ok();
+      case "CANCEL":
+        return this.cancel(now);
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * `CANCEL` — and it is two different things (`usb.md` §7.6, §7.8).
+   *
+   * On a run still cycling it aborts. On the finished-but-held run it is the acknowledgement that
+   * releases it: the last read appears at once, and the run lets go — `ended`, the `.alf`, the
+   * empty idle — `RELEASE_MS` later ({@link advance}). Inside the start window it is
+   * answered `0000` and does nothing at all, and the run starts anyway — which is exactly why
+   * stopping a run takes two of these and why a client has to remember that it asked for one.
+   */
+  private cancel(now: number): EmulatorReply {
+    const run = this.run;
+    if (!run) return ok();
+    const snap = run.observe(now);
+    if (!snap.visible) return ok(); // the start window: accepted, ignored
+    if (snap.finished) {
+      run.acknowledge(now);
+      return ok();
+    }
+    run.abort(now);
+    return ok();
+  }
+
+  private remoteRun(rest: string, now: number): EmulatorReply {
+    const operands = parseOperands(rest);
+    if (!operands || operands.length !== 8) return fail();
+    const [block, lidOn, remoteStart, name, user, sampleId, sierra, method] = operands as string[];
+    const bool = (v: string): boolean | null =>
+      /^true$/i.test(v) ? true : /^false$/i.test(v) ? false : null;
+    const lid = bool(lidOn!);
+    const remote = bool(remoteStart!);
+    const autonomous = bool(sierra!);
+    if (!/^[AB]$/i.test(block!)) return fail();
+    if (lid === null || remote === null || autonomous === null) return fail();
+    if (!["CALC", "BLOCK", "OTHER"].includes(method!.toUpperCase())) return fail();
+    // Both off-values are real parts of the language and neither is modelled here: a
+    // remote-start run waits for a human at a touchscreen this has none of, and a non-autonomous
+    // run needs the optical protocol nothing in this project has reversed (`usb.md` §6).
+    // Rejecting is the honest answer — see `emulator.md` §8.
+    if (remote || !autonomous) return fail();
+    if (this.run) return fail();
+    if (this.authored.length === 0) return fail();
+
+    const request: RunRequest = {
+      name: name!,
+      user: user!,
+      method: method!.toUpperCase(),
+      lidOn: lid,
+      sampleId: sampleId!,
+      directives: [...this.authored],
+      lidTemperatureC: Number(this.hotLidOperand.split(",")[0]) || 105,
+      hotLidOperand: this.hotLidOperand,
+      volumeUl: this.volumeUl,
+    };
+    let run: EmulatedRun;
+    try {
+      run = new EmulatedRun(
+        request,
+        now,
+        new Date(this.startedAt.getTime() + now),
+        this.fs,
+        this.data,
+        {
+          alphaSerial: this.identity.alphaSerial,
+          baseSerial: this.identity.serial,
+          blockLetter: block!.toUpperCase(),
+          blockType: "CFX96",
+          cyclerName: this.identity.serial,
+        },
+        // A lid still warm from the last run shortens this one's preheat (`usb.md` §7.3).
+        this.idleTemperatures(now),
+      );
+    } catch {
+      // A protocol that cannot be executed on paper — a `GOTO` off the end of the step list, or
+      // a loop that never terminates. The instrument would not run it either.
+      return fail();
+    }
+    // A compact `MELT` directive stands for a whole melt curve, and how many reads it produces
+    // follows from operands nothing in this project has ever seen an instance of — so the number
+    // would be invented, exactly as `expectedPlateReads` refuses to guess it. A melt spelled out
+    // the long way (a `PLATEREAD` inside a `GOTO` loop, which is what every stored protocol here
+    // uses) runs normally.
+    if (run.program.directives.some((d) => d.verb === "MELT")) return fail();
+    if (run.producesRunFile && !this.data) {
+      throw new Error(
+        "this emulator was given no run data, so it cannot produce the plate reads this " +
+          "protocol asks for — pass `data` to createCfxEmulator()",
+      );
+    }
+    this.run = run;
+    return ok();
+  }
+}
+
+/** Split a command line into its verb and the rest. `LID OPEN` and `ERRORLIST A` both land with
+ * the operand in `rest`. */
+function splitVerb(line: string): [string, string] {
+  const cut = line.indexOf(" ");
+  return cut < 0 ? [line, ""] : [line.slice(0, cut), line.slice(cut + 1)];
+}
+
+/** `"A","True",…` → the eight operands, or null if the quoting doesn't parse. */
+function parseOperands(rest: string): string[] | null {
+  const out: string[] = [];
+  for (const part of rest.split(",")) {
+    const m = /^"(.*)"$/.exec(part.trim());
+    if (!m) return null;
+    out.push(m[1]!);
+  }
+  return out;
+}
+
+/** The run name as `STATUS?` reports it back: uppercased, filename-hostile characters replaced
+ * and cut to eight (`usb.md` §7.3 — `singletest` → `SINGLETE`, `YouSeq RT - S56` →
+ * `YOUSEQ_R`). The same mangling the report applies at twelve. */
+function reportedRunName(name: string): string {
+  return mangleRunName(name, 8);
+}

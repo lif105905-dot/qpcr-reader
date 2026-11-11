@@ -1,0 +1,27 @@
+# 构建产物与依赖
+node_modules/
+zpcrweb/apps/web/dist/
+zpcrweb/apps/desktop/out/
+zpcrweb/apps/desktop/build/icon.iconset/
+**/dist/
+**/out/mac-*/
+*.tsbuildinfo
+
+# Electron 运行时（242MB，重新打包.command 会自己复用）
+electron-dist/
+
+# 上游仓库的历史（保留在本机备查，不进版本库）
+.git-upstream-zpcrweb/
+
+# macOS / 编辑器
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+
+# 临时与导出文件
+*.tif
+*.tiff
+.tmp/
+*.log

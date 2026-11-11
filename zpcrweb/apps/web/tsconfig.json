@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    // DOM.AsyncIterable is what declares `FileSystemDirectoryHandle.entries()`, which the
+    // disk-folder directory lister walks (`state/diskFolders.ts`).
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // "node" is needed only because @zpcrweb/core's source entry re-exports node.ts, whose
+    // `node:fs/promises` import tsc now sees directly (it was hidden inside dist/index.d.ts
+    // before). App code should still not reach for Node globals.
+    "types": ["vite/client", "node"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    // Mirrors the @zpcrweb/core alias in vite.config.ts so tsc and the editor read the same
+    // source the bundler does, instead of a possibly-stale packages/core/dist/index.d.ts.
+    "paths": {
+      "@zpcrweb/core": ["../../packages/core/src/index.ts"],
+      "@zpcrweb/core/emulator": ["../../packages/core/src/emulator.ts"]
+    }
+  },
+  "include": ["src"]
+}
