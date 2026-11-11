@@ -1315,7 +1315,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
   const downloadCsv = () =>
     downloadText(
       analysisCsvFilename(zpcr.metadata.dataFile),
-      analysisCsv(tableRows),
+      analysisCsv(tableRows, settings.cfxCq),
       "text/csv",
     );
 

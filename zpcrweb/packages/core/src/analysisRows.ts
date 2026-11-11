@@ -105,9 +105,14 @@ export function buildAnalysisRows(run: RunAnalysis, visible: CurveVisible): Anal
 }
 
 /** The same columns the table shows, in the same order, plus `channel` (redundant on screen — a
- * rendered table can carry it as a chip colour instead of text). */
-export function analysisCsv(rows: AnalysisRow[]): string {
-  let csv = csvRow([
+ * rendered table can carry it as a chip colour instead of text).
+ *
+ * When the user has imported Cq values from another program, the two comparison columns come along:
+ * an export that drops them would lose the only record of how far apart the two readings are, which
+ * is usually the reason for exporting at all. */
+export function analysisCsv(rows: AnalysisRow[], cfxCq?: Record<string, number> | null): string {
+  const compare = cfxCq != null && Object.keys(cfxCq).length > 0;
+  const header = [
     "well",
     "sample",
     "sampleType",
@@ -117,11 +122,13 @@ export function analysisCsv(rows: AnalysisRow[]): string {
     "baseline",
     "threshold",
     "cq",
-    "deltaRfu",
-    "endRfu",
-  ]);
+  ];
+  if (compare) header.push("cfxCq", "cqDelta");
+  header.push("deltaRfu", "endRfu");
+  let csv = csvRow(header);
   for (const r of rows) {
-    csv += csvRow([
+    const theirs = compare ? cfxCq[r.wellLabel] : undefined;
+    const cells = [
       r.wellLabel,
       r.sample,
       r.sampleType,
@@ -131,9 +138,13 @@ export function analysisCsv(rows: AnalysisRow[]): string {
       r.baselineFormula,
       r.threshold.toFixed(1),
       r.cq != null ? r.cq.toFixed(2) : "",
-      r.deltaRfu.toFixed(1),
-      r.endRfu.toFixed(1),
-    ]);
+    ];
+    if (compare) {
+      cells.push(theirs != null ? theirs.toFixed(2) : "");
+      cells.push(theirs != null && r.cq != null ? (r.cq - theirs).toFixed(2) : "");
+    }
+    cells.push(r.deltaRfu.toFixed(1), r.endRfu.toFixed(1));
+    csv += csvRow(cells);
   }
   return csv;
 }
