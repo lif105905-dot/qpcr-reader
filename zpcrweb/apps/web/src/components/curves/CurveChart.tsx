@@ -67,6 +67,9 @@ interface Props {
    * wants.
    */
   onCqDrag?: (target: CqDragTarget, threshold: number) => void;
+  /** Drag the dotted threshold line itself (CFX lets you grab it too): reports the RFU under the
+   * pointer, in the analysis' corrected space — the space the rail's threshold inputs take. */
+  onThresholdDrag?: (threshold: number) => void;
   /** The drag is over — released, or ended with Escape (which stops the drag where it is; the
    * threshold it set is an override like any other, undone with the row's own reset button). */
   onCqDragEnd?: () => void;
@@ -111,6 +114,7 @@ export function CurveChart({
   onCqDragStart,
   onCqDrag,
   onCqDragEnd,
+  onThresholdDrag,
   onHoverWell,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -119,6 +123,9 @@ export function CurveChart({
   const cqMarkersRef = useRef<CqMarker[]>([]);
   const thresholdLineStateRef = useRef<ThresholdLineState | null>(null);
   const [tip, setTip] = useState<TooltipData | null>(null);
+  /** The threshold the pointer is currently dragging the line to — shown next to the pointer, so
+   * the number is readable without looking away at the rail. `null` when no such drag is running. */
+  const [draggedThreshold, setDraggedThreshold] = useState<number | null>(null);
   // Which well the pointer is on, reported outward (see `onHoverWell`). Read off the tooltip's
   // own hit test: for a well series its `label` is the well's display label, and every other
   // series kind (dark, factory, aux) belongs to no single well. Through a ref so a caller that
@@ -146,8 +153,8 @@ export function CurveChart({
   // closing over the ones it began with.
   const curvesRef = useRef(curves);
   curvesRef.current = curves;
-  const cqHandlersRef = useRef({ onCqDragStart, onCqDrag, onCqDragEnd });
-  cqHandlersRef.current = { onCqDragStart, onCqDrag, onCqDragEnd };
+  const cqHandlersRef = useRef({ onCqDragStart, onCqDrag, onCqDragEnd, onThresholdDrag });
+  cqHandlersRef.current = { onCqDragStart, onCqDrag, onCqDragEnd, onThresholdDrag };
   /**
    * Whether a Cq drag is in progress — which is also the switch that takes the plot **out of the
    * mouse's way** for the duration (`suppressCursor` below).
@@ -264,8 +271,24 @@ export function CurveChart({
      * reorder `curves` (a filter changing under it), so an index captured at grab time can't be
      * trusted, but a well/fluorophore pair identifies the curve for as long as it is plotted. */
     let dragging: CqDragTarget | null = null;
+    /** True while the pointer is holding the threshold line rather than a ring. */
+    let thresholdDragging = false;
     let pendingTop: number | null = null;
     let frame = 0;
+
+    /** Where the threshold line is drawn — `value + plotDelta` on screen, the same projection the
+     * rings and the line itself use (see `chart.ts`). `null` when no line is showing. */
+    const thresholdRow = (): { y: number; delta: number } | null => {
+      const u = plotRef.current;
+      const value = thresholdLineRef.current;
+      if (!u || value == null) return null;
+      const meta = metaRef.current;
+      const idx = meta.findIndex((m) => m.kind === "well" && m.plotDelta);
+      if (idx === -1) return null;
+      const delta = meta[idx]!.plotDelta![0] ?? 0;
+      const y = u.valToPos(value + delta, "y");
+      return Number.isFinite(y) ? { y, delta } : null;
+    };
 
     const plotPos = (e: MouseEvent): { left: number; top: number } | null => {
       const u = plotRef.current;
@@ -291,6 +314,21 @@ export function CurveChart({
       };
     };
 
+    /** One threshold per frame, for the same reason the ring drag does the same: every move
+     * rewrites a setting, which re-runs the analysis and rebuilds the chart. */
+    const applyThreshold = () => {
+      frame = 0;
+      const u = plotRef.current;
+      const row = thresholdRow();
+      if (!u || !row || pendingTop == null) return;
+      const value = u.posToVal(pendingTop, "y") - row.delta;
+      if (Number.isFinite(value) && value > 0) {
+        const rounded = Math.round(value);
+        setDraggedThreshold(rounded);
+        cqHandlersRef.current.onThresholdDrag?.(rounded);
+      }
+    };
+
     const apply = () => {
       frame = 0;
       const u = plotRef.current;
@@ -308,6 +346,11 @@ export function CurveChart({
     const onMove = (e: MouseEvent) => {
       const pos = plotPos(e);
       if (!pos) return;
+      if (thresholdDragging) {
+        pendingTop = pos.top;
+        if (!frame) frame = requestAnimationFrame(applyThreshold);
+        return;
+      }
       pendingTop = pos.top;
       // One threshold per frame: a move sets an override, which re-runs the run's analysis and
       // rebuilds the chart, and mouse moves arrive faster than that is worth doing.
@@ -320,8 +363,10 @@ export function CurveChart({
     };
 
     const stop = () => {
-      if (!dragging) return;
+      if (!dragging && !thresholdDragging) return;
+      const wasThreshold = thresholdDragging;
       dragging = null;
+      thresholdDragging = false;
       cqDraggingRef.current = false;
       suppressCursor(false);
       pendingTop = null;
@@ -331,13 +376,40 @@ export function CurveChart({
       window.removeEventListener("mouseup", onUp);
       window.removeEventListener("keydown", onKey);
       document.body.classList.remove("is-cqdrag");
-      cqHandlersRef.current.onCqDragEnd?.();
+      if (!wasThreshold) cqHandlersRef.current.onCqDragEnd?.();
+      if (wasThreshold) setDraggedThreshold(null);
+    };
+
+    /** Grabbing the threshold line: within a few pixels of it, anywhere across the plot. */
+    const onThresholdLine = (e: MouseEvent): boolean => {
+      if (!cqHandlersRef.current.onThresholdDrag) return false;
+      const pos = plotPos(e);
+      const row = thresholdRow();
+      if (!pos || !row) return false;
+      return Math.abs(pos.top - row.y) <= 7;
     };
 
     const onDown = (e: MouseEvent) => {
-      if (e.button !== 0 || !cqHandlersRef.current.onCqDrag) return;
+      if (e.button !== 0) return;
+      if (!(cqHandlersRef.current.onCqDrag || cqHandlersRef.current.onThresholdDrag)) return;
       const target = grabbable(e);
-      if (!target) return;
+      if (!target) {
+        // No ring under the pointer — maybe the threshold line is.
+        if (!onThresholdLine(e)) return;
+        e.stopPropagation();
+        e.preventDefault();
+        thresholdDragging = true;
+        cqDraggingRef.current = true;
+        suppressCursor(true);
+        setTip(null);
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+        window.addEventListener("keydown", onKey);
+        document.body.classList.add("is-cqdrag");
+        const row = thresholdRow();
+        pendingTop = row ? row.y : null;
+        return;
+      }
       // Both: `stopPropagation` keeps uPlot from starting a zoom selection, `preventDefault` keeps
       // the browser from starting a text selection that would follow the pointer across the page.
       e.stopPropagation();
@@ -360,7 +432,8 @@ export function CurveChart({
     const onHoverMove = (e: MouseEvent) => {
       const u = plotRef.current;
       if (!u || dragging) return;
-      const cursor = cqHandlersRef.current.onCqDrag && grabbable(e) ? "ns-resize" : "";
+      const cursor =
+        (cqHandlersRef.current.onCqDrag && grabbable(e)) || onThresholdLine(e) ? "ns-resize" : "";
       if (u.over.style.cursor !== cursor) u.over.style.cursor = cursor;
     };
 
@@ -391,6 +464,9 @@ export function CurveChart({
   return (
     <div className="chart">
       <div className="chart__host" ref={hostRef} />
+      {draggedThreshold != null && (
+        <div className="chart__threshold-tip mono">阈值 {draggedThreshold} RFU</div>
+      )}
       {curves.length === 0 && (
         <div className="chart__empty mono">
           No wells selected — enable channels and wells to plot curves.

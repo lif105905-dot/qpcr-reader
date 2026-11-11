@@ -215,6 +215,10 @@ export function ThresholdSection({
       </div>
       )}
 
+      <p className="rail__hint">
+        在图上直接拖动那条虚线也能改阈值——和原版一样，松手后 Cq 立刻重算。
+      </p>
+
       {/* Keyed by fluorophore, not target: a threshold is derived from baseline noise, which is a
           property of the dye and the optics rather than of the biological label on the well — see
           `RunAnalysis.thresholdGroupOf`. */}

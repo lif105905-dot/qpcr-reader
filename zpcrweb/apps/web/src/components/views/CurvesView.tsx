@@ -1399,6 +1399,26 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
     onChange({ thresholdOverrides: next });
   };
 
+  /**
+   * Dragging the dotted threshold line in the plot writes exactly what the rail's number box
+   * writes — a per-fluorophore override — for every fluorophore that line stands for. With the one
+   * dye these runs use that is all of them; with several, the line is only drawn when they share a
+   * threshold, and those are the ones it moves.
+   */
+  const dragThresholdLine = (value: number) => {
+    const groups = thresholdGroups.filter((g) => dyeSpace || g.curve);
+    if (groups.length === 0) return;
+    const line = standingThresholdValue;
+    const under = groups.filter((g) => {
+      const t = groupThresholds.get(g.fluor);
+      return line != null && t != null && Math.abs(t - line) < 0.5;
+    });
+    const targets = under.length > 0 ? under : groups;
+    const next = new Map(settings.thresholdOverrides);
+    for (const g of targets) next.set(g.fluor, Math.round(value));
+    onChange({ thresholdOverrides: next });
+  };
+
   /** The same, one curve at a time — `raw` empty drops back to the fluorophore's threshold. */
   const setCurveThresholdOverride = (key: string, raw: string) => {
     const next = new Map(settings.curveThresholdOverrides);
@@ -2244,6 +2264,11 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
             // other than the threshold crossing: the ring then sits below the threshold, at the
             // refined Cq, so the pointer's height would no longer be the threshold it sets.
             onCqDrag={calibrationOn && settings.cqMethod === DEFAULT_CQ_METHOD ? dragCq : undefined}
+            // CFX lets you grab the threshold line; so does this. The line only exists in the
+            // baseline-subtracted view, and only dye space has a threshold to move.
+            onThresholdDrag={
+              calibrationOn && settings.curveView === "relative" ? dragThresholdLine : undefined
+            }
             onCqDragEnd={endCqDrag}
             onHoverWell={setHoveredChartWell}
           />

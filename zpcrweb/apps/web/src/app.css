@@ -2327,6 +2327,21 @@
   height: 100%;
   width: 100%;
 }
+/* 拖动阈值线时跟随的读数：数字要能在图上直接看到，眼睛不必离开曲线。 */
+.chart__threshold-tip {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 5;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  pointer-events: none;
+}
+
 .chart__empty {
   position: absolute;
   inset: 0;
