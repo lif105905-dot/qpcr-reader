@@ -114,6 +114,15 @@ const NO_DARK_CURVES: PlotDarkCurve[] = [];
  */
 const MELT_CHANNEL = 0;
 
+/** The Baseline section's right-hand value: which window the analysis is actually fitting. */
+function windowSummary(
+  manual: { beginCycle: number; endCycle: number } | null,
+  declared: { beginCycle: number; endCycle: number } | null,
+): string {
+  if (manual) return `手动 ${manual.beginCycle}–${manual.endCycle}`;
+  return declared ? `自动 ${declared.beginCycle}–${declared.endCycle}` : "自动";
+}
+
 interface Props {
   zpcr: Zpcr;
   settings: FileSettings;
@@ -122,6 +131,10 @@ interface Props {
 
 export function CurvesView({ zpcr, settings, onChange }: Props) {
   const [pltdPassword, setPltdPassword] = usePltdPassword();
+  // The window the file itself declares (CFX's Baseline Cycles, "Auto Calculated"). It is what
+  // the analysis uses until the boxes above are filled in, so it is also what the placeholders
+  // and the "自动" summary show.
+  const declaredWindow = zpcr.declaredBaselineWindow ?? null;
 
   // Landscape-phone drawer state (see `.curves__rail`'s media query in app.css). Irrelevant
   // outside that viewport shape — the toggle button and scrim that drive it are `display: none`
@@ -1600,6 +1613,9 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
                 </span>
                 Baseline
               </span>
+              <span className="rail__value">
+                {windowSummary(settings.baselineWindow, declaredWindow)}
+              </span>
             </summary>
             <label className="analysis__field">
               <span>Method</span>
@@ -1625,7 +1641,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
                   min={1}
                   max={cycleCount}
                   value={winDraft.begin}
-                  placeholder="自动"
+                  placeholder={declaredWindow ? String(declaredWindow.beginCycle) : "1"}
                   aria-label="First cycle of the baseline window"
                   onChange={(e) =>
                     commitBaselineWindow({ begin: e.currentTarget.value, end: winDraft.end })
@@ -1637,17 +1653,25 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
                   min={2}
                   max={cycleCount}
                   value={winDraft.end}
-                  placeholder="自动"
+                  placeholder={declaredWindow ? String(declaredWindow.endCycle) : String(cycleCount)}
                   aria-label="Last cycle of the baseline window"
                   onChange={(e) =>
                     commitBaselineWindow({ begin: winDraft.begin, end: e.currentTarget.value })
                   }
                 />
+                <button
+                  type="button"
+                  className="rail__link baseline__auto"
+                  onClick={() => commitBaselineWindow({ begin: "", end: "" })}
+                  disabled={!settings.baselineWindow}
+                >
+                  自动
+                </button>
               </div>
               <span className="rail__hint">
                 {settings.baselineWindow
-                  ? "留空两个框即回到文件声明的窗口"
-                  : "自动：使用这个文件里 CFX 声明的窗口"}
+                  ? `手动 ${settings.baselineWindow.beginCycle}–${settings.baselineWindow.endCycle} 循环：与原版 Baseline Threshold 对话框里的 User Defined 相同`
+                  : `自动：用文件里 CFX 声明的 ${declaredWindow ? `${declaredWindow.beginCycle}–${declaredWindow.endCycle}` : "默认"} 循环；直接改上面的两个数就是手动`}
               </span>
             </div>
             <div className="rail__row">

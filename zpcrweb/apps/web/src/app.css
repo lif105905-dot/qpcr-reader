@@ -5629,3 +5629,19 @@ summary.instrument__panelhead {
   outline: 2px solid var(--ink);
   outline-offset: 1px;
 }
+
+/* Baseline summary values ("自动 2–9" / "手动 3–8") and its explicit reset button. */
+.rail__title .rail__value {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.baseline__window .baseline__auto {
+  margin-left: 6px;
+  flex: none;
+}
+.baseline__window .baseline__auto:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
