@@ -194,33 +194,83 @@ export interface CurvatureEstimate {
  * {@link curvatureThreshold} with its position: what a well's curve says the threshold should be,
  * and where along the run it said so.
  */
+/**
+ * Savitzky–Golay, quartic (order 4) over 5 points — the filter CFX's `FilterSavitzkyGolay` uses
+ * with its default `_FilterPolyOrder = 4`, `_FilterWidth = 5`. At width 5 the quartic fit is
+ * exact, so the coefficients are the textbook ones and `order` picks which derivative comes out:
+ * 0 smooths, 1 differentiates, 2 is the curvature CFX reads its threshold from.
+ */
+const SG = [
+  [-3, 12, 17, 12, -3],
+  [-2, -1, 0, 1, 2],
+  [2, -1, -2, -1, 2],
+] as const;
+
+/** One Savitzky–Golay pass. Edges repeat the end value, as CFX's padded filter does. */
+function savitzkyGolay(values: number[], order: 0 | 1 | 2): number[] {
+  const n = values.length;
+  const k = SG[order]!;
+  const out = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    let sum = 0;
+    for (let j = 0; j < 5; j++) {
+      const idx = Math.min(n - 1, Math.max(0, i - 2 + j));
+      sum += k[j]! * values[idx]!;
+    }
+    out[i] = sum / 35;
+  }
+  return out;
+}
+
+/**
+ * Where CFX takes its automatic threshold from: the cycle of greatest positive curvature on the
+ * rising edge, and the curve's height there.
+ *
+ * The edge is bounded the way `PeakDetection.CalcWidthScanRegion(…, LEFT)` bounds it — the search
+ * stops at the steepest point (`_PeakCurveFiltered`'s maximum, i.e. the first derivative's) and
+ * starts at the last inflection below it (that derivative's local minimum). Reading the maximum
+ * curvature over the *whole* curve instead — what this did before — lands past that point, on the
+ * shoulder, and returns roughly twice CFX's number: measured on three plates whose true thresholds
+ * were 369.2 / 267.6 / 298.9 RFU, the unbounded rule gave 707 / 759 / 648, the bounded one 368 /
+ * 420 / 332.
+ */
 export function curvatureEstimate(values: number[]): CurvatureEstimate | null {
   const n = values.length;
-  if (n < 7) return null;
-  const smooth = new Array<number>(n);
-  for (let i = 0; i < n; i++) {
-    smooth[i] =
-      i < 2 || i >= n - 2
-        ? values[i]!
-        : (-3 * values[i - 2]! +
-            12 * values[i - 1]! +
-            17 * values[i]! +
-            12 * values[i + 1]! -
-            3 * values[i + 2]!) /
-          35;
+  if (n < 9) return null;
+  const slope = savitzkyGolay(values, 1);
+  const curvature = savitzkyGolay(values, 2);
+
+  let apex = -1;
+  let steepest = -Infinity;
+  for (let i = 3; i < n - 3; i++) {
+    if (slope[i]! > steepest) {
+      steepest = slope[i]!;
+      apex = i;
+    }
   }
-  let best = 0;
+  if (apex < 0 || !(steepest > 0)) return null;
+
+  // The last place the slope bottoms out before it climbs to that maximum: where the curve stops
+  // being flat and starts to rise.
+  let start = Math.max(3, apex - 1);
+  for (let i = apex - 1; i >= 4; i--) {
+    if (slope[i - 1]! > slope[i]! && slope[i + 1]! > slope[i]!) {
+      start = i;
+      break;
+    }
+  }
+
+  let best = -Infinity;
   let bestIndex = -1;
-  for (let i = 3; i < n - 1; i++) {
-    const second = smooth[i + 1]! - 2 * smooth[i]! + smooth[i - 1]!;
-    if (second > best) {
-      best = second;
+  for (let i = start; i <= apex && i < n - 3; i++) {
+    if (curvature[i]! > best) {
+      best = curvature[i]!;
       bestIndex = i;
     }
   }
-  if (bestIndex < 0) return null;
-  const value = smooth[bestIndex]!;
-  if (value <= 0) return null;
+  if (bestIndex < 0 || !(best > 0)) return null;
+  const value = values[bestIndex]!;
+  if (!(value > 0)) return null;
   return { value, peakCycle: bestIndex, peakFraction: bestIndex / (n - 1) };
 }
 
@@ -261,7 +311,9 @@ export function autoThreshold(noiseEstimates: number[], options: AutoThresholdOp
       peaks.length === 0 ||
       (latePeaks / peaks.length <= LATE_PEAK_SHARE && median(peaks) <= LATE_PEAK_MEDIAN);
     if (shapes.length > 0 && plateaued) {
-      const shape = median(shapes);
+      // CFX averages the per-well thresholds (`m_AutoThreshold = sum / count`), it does not take
+      // a median — see InternalPCRQuantCalculationEngine.SetAutoThreshold.
+      const shape = shapes.reduce((a, b) => a + b, 0) / shapes.length;
       // A dye whose curves were all flat has no shape to read, so fall back rather than return 0 —
       // a threshold of zero would date every well's Cq at cycle 0.
       if (shape > 0) return shape;
