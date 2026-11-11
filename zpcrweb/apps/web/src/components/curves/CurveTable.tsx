@@ -8,6 +8,9 @@ interface Props {
   /** Cycles read in the active step — the domain the Cq axis spans. 0 when unknown, which drops
    * the axis and leaves the number alone. */
   cycleCount: number;
+  /** CFX's own Cq per well, when the user imported a Cq export (`lib/cfxCq.ts`). Shown beside ours
+   * with the difference, and only as information: nothing downstream reads it. */
+  cfxCq?: Record<string, number> | null;
   /** Whether the plate assigns targets at all — when it doesn't, the group *is* the fluorophore
    * and the Target column would just repeat the Fluor one. */
   usingTargets: boolean;
@@ -54,6 +57,8 @@ type SortKey =
   | "baseline"
   | "threshold"
   | "cq"
+  | "cfxCq"
+  | "cqDelta"
   | "deltaRfu"
   | "endRfu";
 
@@ -74,6 +79,8 @@ const COLUMNS: readonly Column[] = [
   { key: "baseline", label: "Baseline" },
   { key: "threshold", label: "Threshold", numeric: true },
   { key: "cq", label: "Cq", numeric: true },
+  { key: "cfxCq", label: "CFX Cq", numeric: true },
+  { key: "cqDelta", label: "Δ vs CFX", numeric: true },
   { key: "deltaRfu", label: "ΔRFU", numeric: true },
   { key: "endRfu", label: "End RFU", numeric: true },
 ];
@@ -101,6 +108,11 @@ function sortValue(r: AnalysisRow, key: SortKey): string | number | null {
     case "threshold":
       return r.threshold;
     case "cq":
+      return r.cq;
+    case "cfxCq":
+    case "cqDelta":
+      // Filled in per row by the component (the import lives in settings, not in the row), so the
+      // sort falls back to the computed Cq — the columns exist to be read, not to be ordered by.
       return r.cq;
     case "deltaRfu":
       return r.deltaRfu;
@@ -230,6 +242,14 @@ const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
  * lost — it's a real measurement, only a weaker one. */
 const cqInk = (t: number) => Math.round(100 - t * 65);
 
+/** Ours minus the instrument's, to two decimals — the whole point of importing the export. Says
+ * nothing when either side is missing, rather than inventing a difference. */
+function DeltaCq({ ours, theirs }: { ours: number | null; theirs: number | null }) {
+  if (ours == null || theirs == null) return <span className="atbl__none">—</span>;
+  const d = ours - theirs;
+  return <span className={Math.abs(d) <= 0.1 ? "is-good" : undefined}>{d > 0 ? "+" : ""}{d.toFixed(2)}</span>;
+}
+
 /**
  * The Curves view's table mode: the run's Cq/ΔRFU table, in place of the chart. Every value is
  * looked up in the run's one Cq table upstream (see `lib/analysisRows.ts`) — this component only
@@ -253,6 +273,7 @@ export function CurveTable({
   rows,
   usingTargets,
   cycleCount,
+  cfxCq,
   onPickWell,
   onPickTarget,
   onPickSample,
@@ -277,7 +298,11 @@ export function CurveTable({
     );
   }
 
-  const columns = COLUMNS.filter((c) => c.key !== "target" || usingTargets);
+  const columns = COLUMNS.filter(
+    (c) =>
+      (c.key !== "target" || usingTargets) &&
+      (cfxCq != null || (c.key !== "cfxCq" && c.key !== "cqDelta")),
+  );
   const toggle = (key: SortKey) => {
     if (key === sortKey) setDir((d) => (d === 1 ? -1 : 1));
     else {
@@ -379,6 +404,16 @@ export function CurveTable({
                   <CqCell cq={r.cq} cycleCount={cycleCount} color={color} />
                 </PickCell>
               </td>
+              {cfxCq != null && (
+                <>
+                  <td className="mono atbl__num">
+                    {cfxCq[r.wellLabel] != null ? formatCq(cfxCq[r.wellLabel]!) : <span className="atbl__none">—</span>}
+                  </td>
+                  <td className="mono atbl__num">
+                    <DeltaCq ours={r.cq} theirs={cfxCq[r.wellLabel] ?? null} />
+                  </td>
+                </>
+              )}
               <td className="atbl__num">
                 <PickCell {...pickCurve}>
                   <span className="atbl__delta">

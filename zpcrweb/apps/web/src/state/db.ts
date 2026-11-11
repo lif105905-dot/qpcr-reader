@@ -276,6 +276,10 @@ export interface StoredView {
    * instead of using the window the file declares. What CFX does, and what matches its Cq at a
    * fixed threshold; the declared window is the better match when the threshold is automatic. */
   baselinePerWell: boolean;
+  /** Well label → Cq, read from a CFX "Quantification Cq Results" export the user imported.
+   * Only used to show the instrument's own number beside ours in the table (see `lib/cfxCq.ts`);
+   * nothing in the analysis reads it. */
+  cfxCq: Record<string, number> | null;
 }
 
 /**

@@ -81,8 +81,10 @@ import { PasswordPrompt } from "../PasswordPrompt";
 import { Toggle } from "../Toggle";
 import { Switch } from "../Switch";
 import { ResetIcon } from "../ResetIcon";
+import { parseCfxCqCsv } from "../../lib/cfxCq";
 import { DownloadIcon } from "../DownloadIcon";
 import { ImageIcon } from "../ImageIcon";
+import { UploadIcon } from "../ViewIcons";
 import { encodeTiff } from "../../lib/figure/tiff";
 import { curveImageFilename, renderCurveFigure } from "../../lib/figure/curveFigure";
 import { meltImageFilename, renderMeltFigure } from "../../lib/figure/meltFigure";
@@ -1067,6 +1069,16 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
       cqPlateCsv(tableRows),
       "text/csv",
     );
+  };
+
+  /** CFX's own Cq export, read into the file's settings so the table can show it beside ours. */
+  const cfxInputRef = useRef<HTMLInputElement | null>(null);
+  const importCfxCq = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const values = parseCfxCqCsv(await file.text());
+    onChange({ cfxCq: Object.keys(values).length > 0 ? values : null });
   };
 
   /** Wells the colour row acts on (Shift-click in the plate grid). Deliberately not part of the
@@ -2241,6 +2253,24 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
             >
               <DownloadIcon /> 导出 Cq
             </button>
+            {/* CFX's own Cq, imported from its Cq export, shown beside ours in the table. Nothing
+                downstream reads it — it exists so the two numbers can be compared without a
+                spreadsheet round trip. */}
+            <button
+              type="button"
+              className="raw__download analysis__download"
+              onClick={() => cfxInputRef.current?.click()}
+              title="读取 CFX 导出的 Cq CSV（Quantification Cq Results），在表格里与原版逐孔对照"
+            >
+              <UploadIcon /> {settings.cfxCq ? "重导原版 Cq" : "导入原版 Cq"}
+            </button>
+            <input
+              ref={cfxInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              hidden
+              onChange={importCfxCq}
+            />
           </div>
           {tableLayout === "plate" ? (
             <CqPlate rows={tableRows} onPickWell={pickWell} />
@@ -2249,6 +2279,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
               rows={tableRows}
               usingTargets={usingTargets}
               cycleCount={cycleCount}
+              cfxCq={settings.cfxCq}
               onPickWell={pickWell}
               onPickTarget={pickTarget}
               onPickSample={pickSample}

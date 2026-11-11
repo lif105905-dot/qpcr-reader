@@ -638,5 +638,7 @@
   "More views": "更多视图",
   "Curve": "曲线",
   "Group": "分组",
-  "Per-well window": "逐孔窗口"
+  "Per-well window": "逐孔窗口",
+  "CFX Cq": "原版 Cq",
+  "Δ vs CFX": "与原版差"
 }

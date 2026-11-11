@@ -58,6 +58,7 @@ export interface AnalysisSettings
       | "baselineMode"
       | "baselineDriftCorrection"
       | "baselinePerWell"
+      | "cfxCq"
     >
   > {
   /**

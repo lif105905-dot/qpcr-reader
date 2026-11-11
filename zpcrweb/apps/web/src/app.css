@@ -5645,3 +5645,9 @@ summary.instrument__panelhead {
   opacity: 0.4;
   cursor: default;
 }
+
+/* The Cq difference against an imported CFX export: green within a tenth of a cycle, which is the
+   spread the two calculations actually achieve once both are on the same baseline and threshold. */
+.atbl__num .is-good {
+  color: #4ec9a0;
+}

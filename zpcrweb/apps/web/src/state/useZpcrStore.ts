@@ -360,6 +360,7 @@ export interface FileSettings extends AnalysisSettings {
   /** Curves view: CFX's "Baseline Drift Correction" on top of {@link baselineMode}. */
   baselineDriftCorrection: boolean;
   baselinePerWell: boolean;
+  cfxCq: Record<string, number> | null;
   /**
    * Whether this file's content has been edited since it was opened — a threshold moved, the run
    * renamed, a plate attached — and not yet downloaded. The odd one out in this interface: not a
@@ -838,6 +839,7 @@ function defaultSettings(): FileSettings {
     baselineWindow: null,
     baselineDriftCorrection: false,
     baselinePerWell: false,
+    cfxCq: null,
     // A freshly opened file is by definition the copy on disk.
     modified: false,
     ...defaultAnalysisSettings(),
@@ -885,6 +887,7 @@ function viewOf(s: FileSettings): StoredView {
     baselineWindow: s.baselineWindow,
     baselineDriftCorrection: s.baselineDriftCorrection,
     baselinePerWell: s.baselinePerWell,
+    cfxCq: s.cfxCq,
   };
 }
 
@@ -935,6 +938,7 @@ function fromStored(e: StoredFile): FileSettings {
     baselineWindow: v.baselineWindow ?? null,
     baselineDriftCorrection: v.baselineDriftCorrection ?? false,
     baselinePerWell: v.baselinePerWell ?? false,
+    cfxCq: v.cfxCq ?? null,
     temps: new Set(v.temps),
     // Both being non-empty is impossible by construction (see `updateSettings`), so nothing
     // needs reconciling here.
