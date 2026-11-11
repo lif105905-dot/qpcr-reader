@@ -130,7 +130,7 @@ export function analysisCsv(rows: AnalysisRow[]): string {
       channelLabel(r.channel),
       r.baselineFormula,
       r.threshold.toFixed(1),
-      r.cq != null ? r.cq.toFixed(3) : "",
+      r.cq != null ? r.cq.toFixed(2) : "",
       r.deltaRfu.toFixed(1),
       r.endRfu.toFixed(1),
     ]);

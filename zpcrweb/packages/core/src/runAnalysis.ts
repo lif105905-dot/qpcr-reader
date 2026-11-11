@@ -458,11 +458,11 @@ export function formatRfu(n: number): string {
   return String(Math.round(n));
 }
 
-/** A Cq, to one decimal. The second decimal is well inside the run-to-run spread of replicates,
- * so showing it invites comparisons the number can't support — a CSV export should keep more
- * digits for downstream use instead of calling this. */
+/** A Cq, to two decimals. Two is what CFX itself shows and what a comparison against it needs:
+ * rounding to one decimal throws away up to 0.05 cycles, which is half the disagreement the
+ * baseline work was chasing. A CSV export still keeps full precision for downstream use. */
 export function formatCq(n: number | null | undefined): string {
-  return n == null ? "—" : n.toFixed(1);
+  return n == null ? "—" : n.toFixed(2);
 }
 
 function formatCoefficient(n: number): string {
