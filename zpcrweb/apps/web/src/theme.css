@@ -1,5 +1,5 @@
 /* ============================================================================
-   zpcrweb — cyberpunk dark design system
+   zpcrweb — dark design system, shared tokens with the Western page (apps/western)
    Dark-only by design. Neon accents are used for UI chrome ONLY; data series
    use the CVD-validated channel palette (see lib/channelColors.ts).
    ========================================================================== */
@@ -8,18 +8,18 @@
   color-scheme: dark;
 
   /* Surfaces */
-  --plane: #07090d;
-  --panel: #0b0e14;
-  --raised: #111621;
-  --raised-2: #161d2b;
+  --plane: #0b0e14;
+  --panel: #111621;
+  --raised: #161d2b;
+  --raised-2: #1d2634;
 
   /* Hairlines / borders */
-  --border: rgba(120, 200, 255, 0.1);
-  --border-strong: rgba(120, 200, 255, 0.22);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.22);
 
   /* Ink */
-  --ink: #e6f0ff;
-  --ink-2: #8aa0c0;
+  --ink: #e7ecf3;
+  --ink-2: #9aa7b8;
   --ink-muted: #5f7391;
 
   /* Neon accents (chrome only) */
@@ -41,8 +41,8 @@
   --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Menlo", monospace;
 
   /* Metrics */
-  --radius: 8px;
-  --radius-sm: 5px;
+  --radius: 12px;
+  --radius-sm: 8px;
   --gap: clamp(8px, 1.2cqi, 16px);
   --header-h: 52px;
 }

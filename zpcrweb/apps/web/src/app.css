@@ -16,6 +16,9 @@
   grid-template-rows: var(--header-h) auto 1fr;
   height: 100%;
   min-height: 0;
+  /* 与 Western 页面同一套「悬浮卡片」语汇：整页留边，顶栏本身是一张圆角卡。 */
+  padding: 10px;
+  gap: 10px;
 }
 .app--empty {
   grid-template-rows: var(--header-h) 1fr;
@@ -30,8 +33,9 @@
   padding-inline: max(14px, env(safe-area-inset-left)) max(14px, env(safe-area-inset-right));
   height: var(--header-h);
   min-width: 0;
-  border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, var(--panel), transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
 }
 /* Also a <button> (it opens the About view), so it opts out of the global button chrome. */
 .app__logo {
@@ -353,7 +357,7 @@
 .segmented__item.is-active {
   background: var(--neon-cyan-dim);
   color: var(--ink);
-  box-shadow: inset 0 -2px 0 var(--neon-cyan);
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.28);
 }
 .segmented__item:disabled {
   color: var(--ink-muted);

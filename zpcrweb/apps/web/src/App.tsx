@@ -203,12 +203,11 @@ function Logo({ onClick }: { onClick: () => void }) {
     <button
       className="app__logo mono"
       onClick={onClick}
-      title="About zpcrweb"
-      aria-label="About zpcrweb"
+      title="关于 LabKit"
+      aria-label="关于 LabKit"
     >
-      <span className="app__logo-z">z</span>
-      pcr
-      <span className="app__logo-rest">//web</span>
+      <span className="app__logo-z">Lab</span>
+      Kit
     </button>
   );
 }
@@ -916,7 +915,7 @@ export function App() {
       <div className="app app--empty">
         <header className="app__brand">
           <Logo onClick={showAbout} />
-          <span className="app__tag">Bio-Rad CFX qPCR viewer</span>
+          <span className="app__tag">qPCR 读取器</span>
         </header>
         <AboutView
           onFiles={store.addFiles}
