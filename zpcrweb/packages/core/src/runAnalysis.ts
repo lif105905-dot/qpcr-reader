@@ -465,19 +465,15 @@ export function formatCq(n: number | null | undefined): string {
   return n == null ? "—" : n.toFixed(2);
 }
 
-function formatCoefficient(n: number): string {
-  const rounded = Math.round(n * 100) / 100;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
-}
-
 /** Render a fitted linear baseline as "2000 + 4c" (or "2000 - 4c" for a negative slope) — `c`
  * stands for the cycle number. Used everywhere a baseline is displayed or exported, in place of
  * a single diagnostic RFU value, since the fit is a line, not a point. */
 export function formatBaselineFormula(fit: LinearBaselineFit): string {
   const sign = fit.slope < 0 ? "-" : "+";
-  // Intercept is an RFU level (thousands); slope is RFU per cycle, often well under 1, so it keeps
-  // its decimals — rounding it to a whole number would erase most baselines' drift entirely.
-  return `${formatRfu(fit.intercept)} ${sign} ${formatCoefficient(Math.abs(fit.slope))}c`;
+  // Both terms keep two decimals: the intercept is an RFU level a reader wants to compare across
+  // wells ("3545.00" vs "3542.31" reads as a level, "3545" vs "3542" hides the third digit), and the
+  // slope is RFU per cycle, often well under 1 — rounding it away would erase most baselines' drift.
+  return `${fit.intercept.toFixed(2)} ${sign} ${Math.abs(fit.slope).toFixed(2)}c`;
 }
 
 // ---- The run analysis itself -------------------------------------------------------------------
