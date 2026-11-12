@@ -2237,6 +2237,13 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
                 Threshold
               </span>
             </summary>
+            <p className="rail__hint">
+              {settings.cfxCq
+                ? `阈值来源：按原版 Cq 求解${
+                    standingThresholdValue != null ? `（${Math.round(standingThresholdValue)} RFU）` : ""
+                  }`
+                : "阈值来源：曲率估算 — 与原版可能差 0.3–1 循环；把原版导出的 Cq CSV 一起拖进来即可精确对齐"}
+            </p>
             <ThresholdSection
               groups={thresholdRows}
               revealCurve={revealThresholdCurve}
