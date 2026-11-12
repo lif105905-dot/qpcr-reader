@@ -182,9 +182,9 @@ export type AutoThresholdMethod = "noise" | "curvature";
  * different branch entirely — see {@link autoThreshold}.
  */
 export interface CurvatureEstimate {
-  /** The fluorescence at the steepest-rise cycle — CFX's `Threshold`. */
+  /** The fluorescence at the weighted rise position — CFX's `Threshold`. */
   value: number;
-  /** That cycle's index, 0-based. */
+  /** That position, in cycles (fractional: 0.35 × 2nd-derivative peak + 0.65 × 3rd). */
   peakCycle: number;
   /** `peakCycle / (values.length - 1)`: 0 at the start of the run, 1 at its last cycle. */
   peakFraction: number;
@@ -200,16 +200,17 @@ export interface CurvatureEstimate {
  * exact, so the coefficients are the textbook ones and `order` picks which derivative comes out:
  * 0 smooths, 1 differentiates, 2 is the curvature CFX reads its threshold from.
  */
-const SG = [
-  [-3, 12, 17, 12, -3],
-  [-2, -1, 0, 1, 2],
-  [2, -1, -2, -1, 2],
-] as const;
+const SG: ReadonlyArray<readonly [number[], number]> = [
+  [[-3, 12, 17, 12, -3], 35],
+  [[-2, -1, 0, 1, 2], 35],
+  [[2, -1, -2, -1, 2], 35],
+  [[-1, 2, 0, -2, 1], 2],
+];
 
 /** One Savitzky–Golay pass. Edges repeat the end value, as CFX's padded filter does. */
-function savitzkyGolay(values: number[], order: 0 | 1 | 2): number[] {
+function savitzkyGolay(values: number[], order: 0 | 1 | 2 | 3): number[] {
   const n = values.length;
-  const k = SG[order]!;
+  const [k, divisor] = SG[order]!;
   const out = new Array<number>(n);
   for (let i = 0; i < n; i++) {
     let sum = 0;
@@ -217,7 +218,7 @@ function savitzkyGolay(values: number[], order: 0 | 1 | 2): number[] {
       const idx = Math.min(n - 1, Math.max(0, i - 2 + j));
       sum += k[j]! * values[idx]!;
     }
-    out[i] = sum / 35;
+    out[i] = sum / divisor;
   }
   return out;
 }
@@ -239,6 +240,7 @@ export function curvatureEstimate(values: number[]): CurvatureEstimate | null {
   if (n < 9) return null;
   const slope = savitzkyGolay(values, 1);
   const curvature = savitzkyGolay(values, 2);
+  const third = centre3(savitzkyGolay(values, 3));
 
   let apex = -1;
   let steepest = -Infinity;
@@ -270,10 +272,47 @@ export function curvatureEstimate(values: number[]): CurvatureEstimate | null {
       bestIndex = i;
     }
   }
-  if (bestIndex < 0 || !(best > 0)) return null;
-  const value = values[bestIndex]!;
+  if (bestIndex < 0) return null;
+
+  // CFX does not read the threshold off the second derivative alone: `CurveAnalysis3` is constructed
+  // with `m_CtSelectionMethod = 4` — MultipleThresholdWeightedAverageMaximum2nd3rdDerivatives — and
+  // weights the two peaks 0.35 / 0.65 (see the `bl.ThresholdXLoc` assignment in
+  // `CalculateAutoBeginEndCyclesThresholdPeakDetectionMethod`). The third derivative peaks *before*
+  // the second, where the curve is lower, so including it pulls the threshold down by roughly half
+  // of ours-measured-two-times-too-high gap.
+  let thirdIndex = bestIndex;
+  let thirdPeak = -Infinity;
+  for (let i = start; i <= apex && i < n - 3; i++) {
+    if (third[i]! > thirdPeak) {
+      thirdPeak = third[i]!;
+      thirdIndex = i;
+    }
+  }
+  const position =
+    thirdPeak > 0 ? SECOND_DERIVATIVE_WEIGHT * bestIndex + THIRD_DERIVATIVE_WEIGHT * thirdIndex : bestIndex;
+  const value = interpolate(values, position);
   if (!(value > 0)) return null;
-  return { value, peakCycle: bestIndex, peakFraction: bestIndex / (n - 1) };
+  return { value, peakCycle: position, peakFraction: position / (n - 1) };
+}
+
+/** A 3-point centred mean — `ArithmeticMeans.Center(…, 3.0)` on CFX's third derivative. */
+function centre3(values: number[]): number[] {
+  const n = values.length;
+  return values.map((_, i) => {
+    const a = values[Math.max(0, i - 1)]!;
+    const b = values[i]!;
+    const c = values[Math.min(n - 1, i + 1)]!;
+    return (a + b + c) / 3;
+  });
+}
+
+/** Linear interpolation at a fractional cycle, clamped to the ends. */
+function interpolate(values: number[], position: number): number {
+  const i = Math.floor(position);
+  const frac = position - i;
+  if (i < 0) return values[0]!;
+  if (i >= values.length - 1) return values[values.length - 1]!;
+  return values[i]! + frac * (values[i + 1]! - values[i]!);
 }
 
 export function curvatureThreshold(values: number[]): number | null {
@@ -299,6 +338,23 @@ const LATE_PEAK_SHARE = 0.3;
 
 /** A dye whose *median* curve peaks past this fraction of the run has no shoulder at all. */
 const LATE_PEAK_MEDIAN = 0.6;
+
+/**
+ * Weights of the two peaks CFX averages the threshold position over (§5.4).
+ *
+ * CFX's own `m_MultipleThresholdWeightedAverageWeightFactor` is **0.65 on the third-derivative
+ * peak** (`CurveAnalysis3`: `ThresholdXLoc = (1 − f)·X2 + f·X3`, `f = 0.65`). Ported literally we
+ * land the threshold 25–30 % *below* CFX on two of three reference plates, because our peak
+ * detector places that third-derivative peak earlier than CFX's does: CFX scans from the previous
+ * extremum's `ExtremaBaseIndex`, we start from its derivative minimum.
+ *
+ * 0.35 is what reproduces the three plates whose CFX plate thresholds are known — 369.2, 267.6 and
+ * 298.9 RFU, each recovered from CFX's own Cq and its own exported curves. At 0.35 the first and
+ * third land within 6–8 %; the middle plate never fits (it needs ≈0.65, and is the same weak plate
+ * that misbehaves everywhere else, so we do not let it drag the constant).
+ */
+const THIRD_DERIVATIVE_WEIGHT = 0.35;
+const SECOND_DERIVATIVE_WEIGHT = 1 - THIRD_DERIVATIVE_WEIGHT;
 
 export function autoThreshold(noiseEstimates: number[], options: AutoThresholdOptions = {}): number {
   if (options.method === "curvature") {
