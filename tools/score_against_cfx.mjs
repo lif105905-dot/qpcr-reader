@@ -13,12 +13,14 @@ const PASSWORD = "SecureCompressDecompressKeyiQ5V4Files!!##$$";
 const args = process.argv.slice(2);
 let weight = 0.35;
 let baselineRule = "cfx";
+let method = "curvature";
 let offset = 0;
 let quiet = false;
 const roots = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--weight") weight = Number(args[++i]);
   else if (args[i] === "--baseline") baselineRule = args[++i];
+  else if (args[i] === "--method") method = args[++i];
   else if (args[i] === "--offset") offset = Number(args[++i]);
   else if (args[i] === "--quiet") quiet = true;
   else roots.push(args[i]);
@@ -94,7 +96,7 @@ for (const [key, { pcrd, ref }] of plates) {
   if (steps.length === 0) continue;
   const cqTable = core.computeRunAnalysis(
     zpcr,
-    { autoThresholdMethod: "curvature", baselineRule, curvatureWeight: weight },
+    { autoThresholdMethod: method, baselineRule, curvatureWeight: weight },
     steps[0].step,
   ).cqTable;
 
@@ -136,7 +138,7 @@ const weighted = results.reduce((a, r) => a + r.mean * r.n, 0) / total;
 const pass = results.filter((r) => r.mean <= 0.05 && r.max <= 0.3 && r.within >= 0.95).length;
 
 if (!quiet) {
-  console.log(`权重 ${weight} / 基线 ${baselineRule}：${results.length} 块板，${total} 孔`);
+  console.log(`阈值 ${method} / 权重 ${weight} / 基线 ${baselineRule}：${results.length} 块板，${total} 孔`);
   for (const r of results) {
     console.log(
       `  ${r.mean.toFixed(2)}  ${r.within >= 0.95 ? "✔" : " "} ${r.run.slice(0, 54).padEnd(54)} n=${String(r.n).padStart(2)} 最大 ${r.max.toFixed(2)} 偏 ${r.bias >= 0 ? "+" : ""}${r.bias.toFixed(2)}`,

@@ -339,7 +339,11 @@ export function computeCqTable(
     if (options.autoThreshold?.method === "cfx") {
       unique.forEach((c, i) => {
         if (c.contributesToThreshold === false) return;
-        const estimate = cfxThresholdValue(baselines[i]!.correctedValues);
+        const window = baselines[i]!.baselineRegion;
+        const estimate = cfxThresholdValue(
+          baselines[i]!.correctedValues,
+          window ? window.endCycle : undefined,
+        );
         if (estimate === null || !Number.isFinite(estimate) || estimate <= 0) return;
         cfxShapes.set(c.group, [...(cfxShapes.get(c.group) ?? []), estimate]);
       });

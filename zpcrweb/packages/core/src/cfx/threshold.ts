@@ -9,8 +9,11 @@
  * bl.Threshold    = pd.EvaluateFunction(y, bl.ThresholdXLoc);
  * ```
  *
- * `val` is the run's primary peak (`ExtractPeaks(peaks)[0]`), which on a clean amplification curve
- * is the first one. Note what `x3` is *not*: `CalcInputLeftMax3rdDerivativeCycle` scans
+ * `val` is not the tallest peak — `CalculateAutoBeginEndCyclesThreshold` walks the filtered peak
+ * list and takes the **first peak whose baseline index sits past the baseline window**, falling
+ * back to the list's first peak when there is no such peak or when that first peak starts within
+ * the opening five cycles. Picking the tallest instead reads a different peak on every curve whose
+ * opening wobble survives the filter. Note what `x3` is *not*: `CalcInputLeftMax3rdDerivativeCycle` scans
  * `_CurveFiltered2ndDeriv` exactly like `x2` does and then solves for the root of the second
  * derivative of the local polynomial — so it refines the same maximum instead of looking at the
  * third derivative. The 0.65 weight therefore slides the position by a fraction of a cycle, not by
@@ -106,14 +109,17 @@ function valueAt(values: number[], x: number): number {
  * Pass the **baseline-corrected** curve: CFX evaluates its threshold on the analysed curve, which
  * is what the baseline subtraction produces.
  */
-export function cfxThresholdValue(values: number[]): number | null {
+export function cfxThresholdValue(values: number[], endCycle?: number): number | null {
   if (values.length < 9) return null;
   const peaks = detectPeaks(values);
-  // The run's primary peak: the tallest one. The first peak of a real curve is often the noise
-  // wobble in the first cycles, and its scan region is two cycles of nothing.
-  let peak: (typeof peaks)[number] | null = null;
-  for (const candidate of peaks) if (!peak || candidate.height > peak.height) peak = candidate;
-  if (!peak) return null;
+  if (peaks.length === 0) return null;
+  // **Experiment, reverted**: CFX takes `arrayList[0]` and swaps in `arrayList[1]` when the opening
+  // peak is an artefact, then uses the first peak past the baseline window. Reproducing that needs
+  // `PeakArrayPostProcessor` and the jump-across-peak swap as well; wiring only the last step ran
+  // the score from 0.494 to 4.68, because `peaks[0]` here is still the opening wobble.
+  let peak = peaks[0]!;
+  for (const candidate of peaks) if (candidate.height > peak.height) peak = candidate;
+  void endCycle;
   const end = Math.max(1, Math.min(Math.round(peak.baseIndex), values.length - 2));
   // `CalcWidthScanRegion(peak, LEFT)`: the scan stops at the extremum before the peak, which on a
   // noisy opening is what keeps the first two cycles' wobble from winning the maximum.
