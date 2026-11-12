@@ -49,17 +49,19 @@ function linearFit(xs: number[], ys: number[]) {
 }
 
 /** CFX 的 PeakArrayPostProcessor.SetMeanMinMaxThresholdMethod()：留高度超过 min+0.5(max−min) 的峰。 */
-export function selectPeak(peaks: CfxPeak[]): CfxPeak | null {
-  if (peaks.length === 0) return null;
-  if (peaks.length === 1) return peaks[0]!;
+export function filterPeaks(peaks: CfxPeak[]): CfxPeak[] {
+  if (peaks.length <= 1) return [...peaks];
   const heights = peaks.map((p) => p.height);
   const lo = Math.min(...heights);
   const hi = Math.max(...heights);
   const threshold = lo + 0.5 * (hi - lo);
-  for (const peak of peaks) {
-    if (peak.height > threshold) return peak;
-  }
-  return peaks[0]!;
+  return peaks.filter((peak) => peak.height > threshold);
+}
+
+export function selectPeak(peaks: CfxPeak[]): CfxPeak | null {
+  if (peaks.length === 0) return null;
+  if (peaks.length === 1) return peaks[0]!;
+  return filterPeaks(peaks)[0] ?? peaks[0]!;
 }
 
 function testSubRegionHorizontal(values: number[], start: number, end: number) {

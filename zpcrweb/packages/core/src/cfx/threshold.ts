@@ -20,6 +20,7 @@
  * a cycle.
  */
 import { detectPeaks, previousExtremumBase } from "./peakDetection.js";
+import { filterPeaks } from "./baseline.js";
 import { savitzkyGolay } from "../threshold.js";
 
 /** CFX's `m_MultipleThresholdWeightedAverageWeightFactor`. */
@@ -94,6 +95,13 @@ function maxIndexInRange(series: number[], start: number, end: number): number {
   return best;
 }
 
+/** `CalculateJumpAcrossPeak`: how far the curve rises from a peak's start to its end. */
+function jumpAcross(values: number[], peak: { startIndex: number; endIndex: number }): number {
+  const a = values[Math.round(peak.startIndex)] ?? 0;
+  const b = values[Math.round(peak.endIndex)] ?? 0;
+  return b - a;
+}
+
 /** Linearly interpolated value of `values` at fractional index `x`. */
 function valueAt(values: number[], x: number): number {
   const i = Math.floor(x);
@@ -113,13 +121,33 @@ export function cfxThresholdValue(values: number[], endCycle?: number): number |
   if (values.length < 9) return null;
   const peaks = detectPeaks(values);
   if (peaks.length === 0) return null;
-  // **Experiment, reverted**: CFX takes `arrayList[0]` and swaps in `arrayList[1]` when the opening
-  // peak is an artefact, then uses the first peak past the baseline window. Reproducing that needs
-  // `PeakArrayPostProcessor` and the jump-across-peak swap as well; wiring only the last step ran
-  // the score from 0.494 to 4.68, because `peaks[0]` here is still the opening wobble.
-  let peak = peaks[0]!;
-  for (const candidate of peaks) if (candidate.height > peak.height) peak = candidate;
-  void endCycle;
+  // `PeakArrayPostProcessor` (FilterType 3 = peak height, MeanMinMaxThreshold = min + 0.5·(max−min)):
+  // `arrayList`. Its first entry is the run's primary peak.
+  const filtered = filterPeaks(peaks);
+  let primary = filtered[0] ?? peaks[0]!;
+  // The swap: when the opening peak is an artefact and a later one jumps higher, CFX takes the later
+  // one — and moves the baseline start past the discarded peak.
+  if (filtered.length > 1) {
+    const [firstPeak, secondPeak] = filtered;
+    if (
+      firstPeak!.baseIndex <= 5 &&
+      secondPeak!.baseIndex >= values.length - 1 &&
+      jumpAcross(values, secondPeak!) >= jumpAcross(values, firstPeak!)
+    ) {
+      primary = secondPeak!;
+    }
+  }
+  // `val8`: the first peak of the raw list whose baseline index sits past the window.
+  let past: (typeof peaks)[number] | null = null;
+  if (endCycle != null) {
+    for (const candidate of peaks) {
+      if (candidate.baseIndex > endCycle - 1) {
+        past = candidate;
+        break;
+      }
+    }
+  }
+  const peak = past != null && !(primary.startIndex <= 5) ? past : primary;
   const end = Math.max(1, Math.min(Math.round(peak.baseIndex), values.length - 2));
   // `CalcWidthScanRegion(peak, LEFT)`: the scan stops at the extremum before the peak, which on a
   // noisy opening is what keeps the first two cycles' wobble from winning the maximum.
