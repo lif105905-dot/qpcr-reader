@@ -24,7 +24,7 @@ import {
 } from "../uplot/chart";
 
 /** The figure's width in CSS pixels — the layout's unit, exactly as in `meltFigure.ts`. */
-const FIGURE_CSS_WIDTH = 1200;
+const FIGURE_CSS_WIDTH = 2400;
 
 /** Height as a fraction of width: the amplification plot is wider than tall on screen too. */
 const FIGURE_ASPECT = 0.62;
@@ -32,8 +32,16 @@ const FIGURE_ASPECT = 0.62;
 /** The physical width the file is written for; the 300 dpi tag follows from it. */
 const FIGURE_INCHES = 8;
 
-/** The on-screen width these chart sizes were tuned for (see `BuildChartConfig.print`). */
-const REFERENCE_CSS_WIDTH = 800;
+/** The on-screen width these chart sizes were tuned for (see `BuildChartConfig.print`). Set well
+ * below the canvas width on purpose: type and rules then occupy a *larger share* of the file than
+ * they do on screen, which is what makes the exported picture readable when it is dropped into a
+ * slide and shrunk — the complaint that started this was "zoom in and everything is a hairline". */
+const REFERENCE_CSS_WIDTH = 660;
+
+/** How much heavier than "same relative weight as on screen" the exported ink is drawn. The canvas
+ * is 2× the old 1200 px, so a weight that merely matched the screen would look *thinner* at the
+ * same display size; 1.3 puts the curves and annotations comfortably above that. */
+const INK_BOOST = 1.3;
 
 /** The dotted threshold rule, matching the overlay's `THRESHOLD_LINE_DASH` rhythm. */
 const THRESHOLD_INK = "#1a1a1a";
@@ -86,12 +94,19 @@ export async function renderCurveFigure(input: CurveFigureInput): Promise<CurveF
       height,
       onHover: () => {},
       print: { scale },
+      // 2400 px wide, so a weight expressed in on-screen pixels has to be doubled just to look
+      // the same; `INK_BOOST` then takes it past that.
+      curveWidth: (input.curveWidth ?? 1) * 2 * INK_BOOST,
     });
 
     let markReady: (u: uPlot) => void = () => {};
     const whenReady = new Promise<uPlot>((resolve) => {
       markReady = resolve;
     });
+    // Room for the last x tick label. uPlot 1.x has no `padding`, and the plot area runs to the
+    // canvas edge, so a label centred on the final tick loses its right half. Widening the x range
+    // by a hair leaves exactly that gutter while keeping the ticks at 0, 10, 20….
+    extendXRange(built.options);
     built.options.hooks = { ready: [markReady] };
 
     const plot = new uPlot(built.options, built.data, host);
@@ -116,6 +131,21 @@ export async function renderCurveFigure(input: CurveFigureInput): Promise<CurveF
   }
 }
 
+/** uPlot's range callback signature, narrowed to the call this file makes. */
+type RangeFn = (u: uPlot, min: number, max: number, key: string | null) => [number, number];
+
+/** Grow the x range by ~1.5 % of its span, so the last tick label is not clipped by the canvas. */
+function extendXRange(options: uPlot.Options): void {
+  const scale = options.scales?.x;
+  if (!scale) return;
+  const original = scale.range;
+  scale.range = (u: uPlot, min: number, max: number): [number, number] => {
+    const base = typeof original === "function" ? (original as RangeFn)(u, min, max, null) : [min, max];
+    const [lo, hi] = (Array.isArray(base) ? base : [min, max]) as [number, number];
+    return [lo, hi + Math.max(0.4, (hi - lo) * 0.015)];
+  };
+}
+
 /** The threshold rule and the Cq rings, in the plot's own pixel space. */
 function drawAnnotations(
   plot: uPlot,
@@ -126,23 +156,23 @@ function drawAnnotations(
   scale: number,
 ): void {
   const ctx = plot.ctx;
+  // Work in the canvas's own pixels. `valToPos(…, true)` returns device pixels *including* the
+  // axes' offsets, which is what keeps a ring on its curve: the CSS-pixel variant is relative to
+  // the plot area, so drawing it straight onto the canvas slid every ring left by the width of the
+  // y axis — 226 px at this size, far enough to put a Cq marker on the wrong cycle.
   const ratio = ctx.canvas.width / plot.width;
-  // Draw in CSS pixels: the canvas is already scaled by the device ratio, so doing the strokes in
-  // the plot's own units keeps a 1 px rule 1 px on every screen.
-  ctx.save();
-  ctx.scale(ratio, ratio);
 
   if (threshold != null) {
     // Every curve shares one `plotDelta` in the "Relative" view; the first well's is that value,
     // and using it reproduces the overlay's own row arithmetic (see `chart.ts`'s threshold pass).
     const delta = meta.find((m) => m.kind === "well" && m.plotDelta)?.plotDelta?.[0] ?? 0;
-    const y = plot.valToPos(threshold + delta, "y");
+    const y = plot.valToPos(threshold + delta, "y", true);
     if (Number.isFinite(y)) {
-      const left = plot.valToPos(plot.scales.x!.min!, "x");
-      const right = plot.valToPos(plot.scales.x!.max!, "x");
+      const left = plot.valToPos(plot.scales.x!.min!, "x", true);
+      const right = plot.valToPos(plot.scales.x!.max!, "x", true);
       ctx.save();
       ctx.strokeStyle = THRESHOLD_INK;
-      ctx.lineWidth = 1.4;
+      ctx.lineWidth = 1.4 * 2 * INK_BOOST * ratio;
       ctx.setLineDash(THRESHOLD_DASH.map((n) => n * Math.max(1, scale * 0.8)));
       ctx.beginPath();
       ctx.moveTo(left, y);
@@ -154,16 +184,14 @@ function drawAnnotations(
 
   if (drawRings) {
     for (const m of markers) {
-      const x = plot.valToPos(m.x, "x");
-      const y = plot.valToPos(m.y, "y");
+      const x = plot.valToPos(m.x, "x", true);
+      const y = plot.valToPos(m.y, "y", true);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       ctx.beginPath();
-      ctx.arc(x, y, 4.5 * Math.max(1, scale * 0.8), 0, Math.PI * 2);
+      ctx.arc(x, y, 4.5 * Math.max(1, scale * 0.8) * ratio, 0, Math.PI * 2);
       ctx.strokeStyle = m.color;
-      ctx.lineWidth = 1.6;
+      ctx.lineWidth = 1.6 * 2 * INK_BOOST * ratio;
       ctx.stroke();
     }
   }
-
-  ctx.restore();
 }

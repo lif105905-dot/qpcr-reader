@@ -35,9 +35,9 @@ import type { MeltView } from "../../state/useZpcrStore";
 
 /** The figure's width in CSS pixels. This — not the device pixels it becomes — is what the
  * layout is computed in: uPlot sizes axes and picks tick intervals in CSS pixels, so a fixed
- * width is what makes the export look the same on a retina screen (2400 px wide) and a 1× one
- * (1200 px wide). Only the resolution differs between them. */
-const FIGURE_CSS_WIDTH = 1200;
+ * width is what makes the export look the same on a retina screen (4800 px wide) and a 1× one
+ * (2400 px wide). Only the resolution differs between them. */
+const FIGURE_CSS_WIDTH = 2400;
 
 /** Height as a fraction of width. Close to the on-screen chart's shape, so the export is the
  * picture the user was looking at rather than a reflowed one. */
@@ -49,7 +49,10 @@ const FIGURE_INCHES = 8;
 
 /** The width a chart is drawn at on screen, and what the type sizes in `meltChart.ts` are tuned
  * for. The export divides by it to grow the labels in proportion to the bigger canvas. */
-const REFERENCE_CSS_WIDTH = 800;
+const REFERENCE_CSS_WIDTH = 660;
+
+/** Extra weight over "same relative weight", for the doubled canvas — see `curveFigure.ts`. */
+const INK_BOOST = 1.3;
 
 /** The ink the exported labels are written in — the same near-black print mode asks the chart's
  * axes to use, so a Tm label does not look like a visitor from another figure. */
@@ -132,7 +135,7 @@ function drawMeltingTemperatures(
     ctx.arc(x, y, dotR, 0, Math.PI * 2);
     ctx.fillStyle = "#ffffff";
     ctx.fill();
-    ctx.lineWidth = 1.3 * scale * ratio;
+    ctx.lineWidth = 1.3 * scale * ratio * INK_BOOST;
     ctx.strokeStyle = m.color;
     ctx.stroke();
 
@@ -185,6 +188,10 @@ export async function renderMeltFigure(input: MeltFigureInput): Promise<MeltFigu
       height,
       onHover: () => {},
       print: { scale },
+      // Twice the old on-screen weight, but without the extra boost the amplification figure
+      // takes: a melt draws every well over 30–95 °C, and 96 curves at that weight merge into a
+      // single green slab. The ring and Tm-label ink below still gets `INK_BOOST`.
+      curveWidth: 2 * 1.8,
     });
 
     // `ready` fires once the first draw has completed. The constructor draws synchronously, so
@@ -194,6 +201,19 @@ export async function renderMeltFigure(input: MeltFigureInput): Promise<MeltFigu
     const whenReady = new Promise<uPlot>((resolve) => {
       markReady = resolve;
     });
+    // Same right-hand breathing room as the amplification figure — see `extendXRange` there.
+    {
+      type RangeFn = (u: uPlot, min: number, max: number, key: string | null) => [number, number];
+      const scale = built.options.scales?.x;
+      const original = scale?.range;
+      if (scale) {
+        scale.range = (u: uPlot, min: number, max: number): [number, number] => {
+          const base = typeof original === "function" ? (original as RangeFn)(u, min, max, null) : [min, max];
+          const [lo, hi] = (Array.isArray(base) ? base : [min, max]) as [number, number];
+          return [lo, hi + Math.max(0.4, (hi - lo) * 0.015)];
+        };
+      }
+    }
     built.options.hooks = { ready: [markReady] };
 
     const plot = new uPlot(built.options, built.data, host);
