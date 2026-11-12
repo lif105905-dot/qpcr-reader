@@ -297,17 +297,12 @@ export function computeCqTable(
     // group also carries the steepest-rise value of every well in it. Wells excluded from the noise
     // cohort are excluded here too: a NTC that never rose would drag the median down.
     const shapes = new Map<string, number[]>();
-    const peakFractions = new Map<string, number[]>();
     if (options.autoThreshold?.method === "curvature") {
       unique.forEach((c, i) => {
         if (c.contributesToThreshold === false) return;
         const estimate = curvatureEstimate(baselines[i]!.correctedValues);
         if (estimate === null) return;
         shapes.set(c.group, [...(shapes.get(c.group) ?? []), estimate.value]);
-        peakFractions.set(c.group, [
-          ...(peakFractions.get(c.group) ?? []),
-          estimate.peakFraction,
-        ]);
       });
     }
     for (const [group, everyone] of all) {
@@ -318,7 +313,6 @@ export function computeCqTable(
           auto: {
             ...options.autoThreshold,
             curvatureEstimates: shapes.get(group),
-            curvaturePeakFractions: peakFractions.get(group),
           },
         }),
       );

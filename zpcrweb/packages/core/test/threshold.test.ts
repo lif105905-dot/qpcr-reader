@@ -195,16 +195,15 @@ describe("autoThreshold under the curvature rule", () => {
     expect(threshold).toBeCloseTo(1000, 6);
   });
 
-  it("declines — and falls back to the library default multiplier — when the dye never plateaus", () => {
-    // Every well peaks in the last third of its run: no shoulder to read a line off.
+  it("reads the curvature mean even when the dye never plateaus", () => {
+    // A weak plate used to fall through to 20×noise here; measured against CFX's own Cq on such a
+    // plate, the curvature mean is the better answer (|ΔCq| 0.75 vs 1.27 cycles).
     const threshold = autoThreshold([2, 2, 2], {
       method: "curvature",
       curvatureEstimates: [5000, 5000, 5000],
-      curvaturePeakFractions: [0.8, 0.85, 0.9],
       multiplier: 87,
     });
-    // DEFAULT_THRESHOLD_MULTIPLIER (20) × median noise, not the caller's 87×.
-    expect(threshold).toBeCloseTo(40, 6);
+    expect(threshold).toBeCloseTo(5000, 6);
   });
 
   it("still falls back to the caller's multiplier when the noise rule was asked for", () => {

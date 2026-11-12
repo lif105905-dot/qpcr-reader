@@ -140,7 +140,6 @@ export interface AutoThresholdOptions {
   /** Per-curve {@link CurvatureEstimate.peakFraction} for this dye. A dye whose curves are mostly
    * still climbing at the end of the run has no shoulder to read a threshold off, so the
    * `"curvature"` rule declines and the noise rule answers instead. */
-  curvaturePeakFractions?: number[];
 }
 
 /**
@@ -329,16 +328,6 @@ export function curvatureThreshold(values: number[]): number | null {
  * one the physics supports — baseline noise is a property of the dye, the optics and the well,
  * while a target is a biological label attached to the same physical measurement.
  */
-/** A curve peaking past this fraction of the run is still climbing at its end — see
- * {@link AutoThresholdOptions.curvaturePeakFractions}. */
-const LATE_PEAK_FRACTION = 0.7;
-
-/** Share of a dye's curves that may peak late before the `"curvature"` rule declines. */
-const LATE_PEAK_SHARE = 0.3;
-
-/** A dye whose *median* curve peaks past this fraction of the run has no shoulder at all. */
-const LATE_PEAK_MEDIAN = 0.6;
-
 /**
  * Weights of the two peaks CFX averages the threshold position over (§5.4).
  *
@@ -359,16 +348,7 @@ const SECOND_DERIVATIVE_WEIGHT = 1 - THIRD_DERIVATIVE_WEIGHT;
 export function autoThreshold(noiseEstimates: number[], options: AutoThresholdOptions = {}): number {
   if (options.method === "curvature") {
     const shapes = options.curvatureEstimates ?? [];
-    const peaks = options.curvaturePeakFractions ?? [];
-    // A dye whose curves are still climbing when the run ended has not shown CFX a shoulder, and
-    // CFX does not read a threshold off such curves either — it falls through to another branch.
-    // Say so by declining here: roughly a third of a weak plate's wells peak in the last third of
-    // the run, none of a healthy plate's do.
-    const latePeaks = peaks.filter((f) => f > LATE_PEAK_FRACTION).length;
-    const plateaued =
-      peaks.length === 0 ||
-      (latePeaks / peaks.length <= LATE_PEAK_SHARE && median(peaks) <= LATE_PEAK_MEDIAN);
-    if (shapes.length > 0 && plateaued) {
+    if (shapes.length > 0) {
       // CFX averages the per-well thresholds (`m_AutoThreshold = sum / count`), it does not take
       // a median — see InternalPCRQuantCalculationEngine.SetAutoThreshold.
       const shape = shapes.reduce((a, b) => a + b, 0) / shapes.length;
