@@ -812,7 +812,10 @@ function defaultSettings(): FileSettings {
     curveView: "relative",
     meltView: "derivative",
     drawBaseline: false,
-    scale: "linear",
+    // CFX's own amplification panel opens on a log RFU axis (`Log Scale` ticked), and a log
+    // axis is what makes the baseline and the exponential phase readable together. Each file
+    // remembers whatever the user switches to afterwards.
+    scale: "log",
     curveWidth: 1,
     showDark: false,
     // On by default: the live-vs-factory comparison is the Reference view's whole purpose.

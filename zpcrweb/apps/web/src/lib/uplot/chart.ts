@@ -173,6 +173,21 @@ function isDecade(v: number): boolean {
   return Math.abs(e - Math.round(e)) < 1e-9;
 }
 
+/** Digits as superscripts, for a log axis labelled the way CFX labels it: `10²`, `10³`, … */
+const SUPERSCRIPT: Record<string, string> = {
+  "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+  "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻",
+};
+
+/** `1000` → `10³`; only meaningful on exact decades (see {@link isDecade}). */
+function decadeLabel(value: number): string {
+  const exponent = Math.round(Math.log10(value));
+  return `10${String(exponent)
+    .split("")
+    .map((ch) => SUPERSCRIPT[ch] ?? ch)
+    .join("")}`;
+}
+
 /** `10000` → `10,000`, matching the axes CFX draws. */
 /**
  * Round tick positions for a printed y axis — about `count` of them, on a 1/2/2.5/5 × 10ⁿ step.
@@ -1047,8 +1062,9 @@ export function buildChart(cfg: BuildChartConfig): {
                 }
                 return out;
               },
+              // CFX labels its log axis `10²`, `10³`, … rather than 100 / 1,000 / 10,000.
               values: (_u: uPlot, splits: number[]) =>
-                splits.map((v) => (isDecade(v) ? thousands(v) : "")),
+                splits.map((v) => (isDecade(v) ? decadeLabel(v) : "")),
               grid: { show: false },
             }
           : // Same as the log axis: cycle rules only. A horizontal rule behind a rising curve adds

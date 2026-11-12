@@ -166,11 +166,23 @@ export function buildMeltChart(cfg: BuildMeltChartConfig): {
       x: { time: false },
       // Always linear: a derivative is signed and crosses zero at every point the curve stops
       // falling, which a log axis cannot show at all.
-      // Same rule as the amplification chart: a melting plot grows upwards, so the axis is
-      // pinned to zero — CFX draws its -dF/dT and RFU melt panels that way too. The derivative
-      // dips a little below zero at the ends of the ramp; those points are clipped by the plot
-      // area rather than being allowed to shrink every peak to make room for them.
-      y: { distr: 1, range: (_u, _min, max) => [0, Math.max(1, max) * 1.04] },
+      //
+      // Two rules, one per view, both copied from CFX's own melt panels:
+      // - **derivative**: pinned to zero, because that zero is the baseline a peak rises from.
+      // - **raw fluorescence**: *not* zero-based. A melt runs from ~9,500 down to ~3,500 RFU, and
+      //   starting the axis at zero squashed that entire fall into a thin band at the top — CFX's
+      //   own panel reads `RFU (10^3)` from 3.5 to 10. Fitting the data (plus a little air) is what
+      //   makes the shape of the melt readable at all.
+      y:
+        cfg.view === "raw"
+          ? {
+              distr: 1,
+              range: (_u: uPlot, min: number, max: number): [number, number] => {
+                const pad = Math.max(1, (max - min) * 0.06);
+                return [min - pad, max + pad];
+              },
+            }
+          : { distr: 1, range: (_u, _min, max) => [0, Math.max(1, max) * 1.04] },
     },
     axes: [
       {
