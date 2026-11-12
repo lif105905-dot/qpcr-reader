@@ -113,6 +113,13 @@ import {
 } from "../lib/experiment";
 import { SAMPLE_FILES_LIST, sampleFileName, sampleNameFromUrl, sampleUrl } from "../lib/samples";
 import { currentPltdPassword, usePltdPassword } from "./pltdPassword";
+import {
+  isCfxAmplificationName,
+  isCfxCqName,
+  stashCfxAmplification,
+  stashCfxCq,
+} from "../lib/cfxStash";
+import { parseCfxCqCsv } from "../lib/cfxCq";
 import { onHashChange, readHash, writeHash, type HashState } from "./urlHash";
 
 export { DEFAULT_THRESHOLD_MULTIPLIER } from "./analysisSettings";
@@ -2058,7 +2065,24 @@ export function useZpcrStore(): ZpcrStore {
     async (input: FileList | File[], options?: AddFilesOptions) => {
       // `.txt`'s kind can only be known after reading its bytes (see `fileKind`), so every file
       // is read up front rather than filtered by extension first the way the other formats are.
-      const candidates = Array.from(input).filter((file) => matchesSupportedExtension(file.name));
+      // CFX's own CSV exports are not files this app opens — they describe a run rather than being
+      // one — but they arrive in the same drop as the plate folder. Read them first and keep them
+      // by run name (`cfxStash`), so the run picks its reference numbers up the moment it opens.
+      const incoming = Array.from(input);
+      for (const file of incoming) {
+        if (!/\.csv$/i.test(file.name)) continue;
+        try {
+          if (isCfxCqName(file.name)) {
+            const values = parseCfxCqCsv(await file.text());
+            stashCfxCq(file.name, new Map(Object.entries(values)));
+          } else if (isCfxAmplificationName(file.name)) {
+            stashCfxAmplification(file.name, await file.text());
+          }
+        } catch {
+          // A CSV we cannot read is simply not a reference table; the run still opens without it.
+        }
+      }
+      const candidates = incoming.filter((file) => matchesSupportedExtension(file.name));
       let lastName: string | null = null;
       let lastKind: FileKind | null = null;
       for (const file of candidates) {

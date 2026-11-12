@@ -27,6 +27,50 @@ interface Props {
   disabledTitle?: string;
 }
 
+/**
+ * Every file in a drop, folders included.
+ *
+ * `dataTransfer.files` flattens a dropped folder to an entry with no content, so a plate folder —
+ * one `.pcrd` beside the CSVs CFX exported from it — used to arrive as a single unusable item. The
+ * entries API is the only way in: it hands back a directory reader that yields its children a
+ * hundred at a time, so the loop below keeps reading until it comes back empty.
+ */
+async function filesFromDrop(transfer: DataTransfer): Promise<File[]> {
+  const entries = Array.from(transfer.items)
+    .map((item) => (typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null))
+    .filter((entry): entry is FileSystemEntry => entry != null);
+  if (entries.length === 0) return Array.from(transfer.files);
+
+  const out: File[] = [];
+  const readBatch = (directory: FileSystemDirectoryEntry) =>
+    new Promise<FileSystemEntry[]>((resolve) => {
+      directory.createReader().readEntries(
+        (batch) => resolve(batch),
+        () => resolve([]),
+      );
+    });
+  const walk = async (entry: FileSystemEntry): Promise<void> => {
+    if (entry.isFile) {
+      const file = await new Promise<File | null>((resolve) => {
+        (entry as FileSystemFileEntry).file(
+          (f) => resolve(f),
+          () => resolve(null),
+        );
+      });
+      if (file) out.push(file);
+      return;
+    }
+    if (!entry.isDirectory) return;
+    for (;;) {
+      const batch = await readBatch(entry as FileSystemDirectoryEntry);
+      if (batch.length === 0) break;
+      for (const child of batch) await walk(child);
+    }
+  };
+  for (const entry of entries) await walk(entry);
+  return out;
+}
+
 const DEFAULT_ACCEPT = SUPPORTED_EXTENSIONS.join(",");
 
 export function DropZone({
@@ -50,7 +94,11 @@ export function DropZone({
       e.preventDefault();
       if (disabled) return;
       setDragging(false);
-      if (e.dataTransfer.files.length) void onFiles(e.dataTransfer.files);
+      if (e.dataTransfer.items.length > 0 || e.dataTransfer.files.length > 0) {
+        void filesFromDrop(e.dataTransfer).then((files) => {
+          if (files.length > 0) void onFiles(files);
+        });
+      }
     },
     [onFiles, disabled],
   );

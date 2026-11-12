@@ -21,6 +21,7 @@ import {
 } from "@zpcrweb/core";
 import { computeWellTypes } from "../../lib/wellTypes";
 import { solveThreshold, type SolvableCurve } from "../../lib/solveThreshold";
+import { stashedCfxCq } from "../../lib/cfxStash";
 import { SAMPLE_TYPE_META } from "../../lib/sampleType";
 import {
   wellKey,
@@ -1172,7 +1173,12 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
       return;
     }
 
-    const values = parseCfxCqCsv(text);
+    applyCfxCq(parseCfxCqCsv(text));
+  };
+
+  /** Point this run's threshold at CFX's own numbers: store the table, solve the line that puts our
+   * crossings on it, and switch to the per-well window that fixed thresholds reward. */
+  const applyCfxCq = (values: Record<string, number>) => {
     const count = Object.keys(values).length;
     const solved = count > 0 ? thresholdForCq(values) : null;
     const overrides = solved == null ? null : new Map(thresholdGroups.map((g) => [g.fluor, solved]));
@@ -1194,6 +1200,20 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
           : `已导入 ${count} 个孔，并反推出阈值 ${solved} RFU`,
     );
   };
+
+  // A plate folder usually arrives as one drop: the `.pcrd` plus the CSVs CFX exported from it.
+  // The store parks those CSVs (see `cfxStash`); here the run claims its own table the first time
+  // it is opened, which is what makes "drop the folder" mean "and match CFX's numbers".
+  const claimedCfx = useRef<string | null>(null);
+  useEffect(() => {
+    const runName = zpcr.metadata.dataFile;
+    if (!runName || settings.cfxCq || claimedCfx.current === runName) return;
+    const stashed = stashedCfxCq(runName);
+    if (!stashed) return;
+    claimedCfx.current = runName;
+    applyCfxCq(Object.fromEntries(stashed));
+    // `applyCfxCq` closes over the analysis tables; re-running on them is not wanted here.
+  }, [zpcr.metadata.dataFile, settings.cfxCq]);
 
   /** Wells the colour row acts on (Shift-click in the plate grid). Deliberately not part of the
    * file's settings: a selection is a gesture in progress, not a property of the run, and leaving
