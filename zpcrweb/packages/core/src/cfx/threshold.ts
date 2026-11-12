@@ -17,6 +17,7 @@
  * a cycle.
  */
 import { detectPeaks } from "./peakDetection.js";
+import { selectPeak } from "./baseline.js";
 import { savitzkyGolay } from "../threshold.js";
 
 /** CFX's `m_MultipleThresholdWeightedAverageWeightFactor`. */
@@ -109,8 +110,11 @@ function valueAt(values: number[], x: number): number {
 export function cfxThresholdValue(values: number[]): number | null {
   if (values.length < 9) return null;
   const peaks = detectPeaks(values);
-  if (peaks.length === 0) return null;
-  const peak = peaks[0]!;
+  // The run's primary peak, chosen the same way the baseline window chooses it: the first peak
+  // above the mid-height line. `peaks[0]` would be the first *noise* bump, and its scan region is
+  // two cycles of nothing.
+  const peak = selectPeak(peaks);
+  if (!peak) return null;
   const end = Math.max(1, Math.min(Math.round(peak.baseIndex), values.length - 2));
   const start = 0;
   const curvature = savitzkyGolay(values, 2);

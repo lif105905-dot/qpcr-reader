@@ -49,7 +49,7 @@ function linearFit(xs: number[], ys: number[]) {
 }
 
 /** CFX 的 PeakArrayPostProcessor.SetMeanMinMaxThresholdMethod()：留高度超过 min+0.5(max−min) 的峰。 */
-function selectPeak(peaks: CfxPeak[]): CfxPeak | null {
+export function selectPeak(peaks: CfxPeak[]): CfxPeak | null {
   if (peaks.length === 0) return null;
   if (peaks.length === 1) return peaks[0]!;
   const heights = peaks.map((p) => p.height);
