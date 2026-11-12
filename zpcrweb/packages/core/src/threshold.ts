@@ -207,7 +207,7 @@ const SG: ReadonlyArray<readonly [number[], number]> = [
 ];
 
 /** One Savitzky–Golay pass. Edges repeat the end value, as CFX's padded filter does. */
-function savitzkyGolay(values: number[], order: 0 | 1 | 2 | 3): number[] {
+export function savitzkyGolay(values: number[], order: 0 | 1 | 2 | 3): number[] {
   const n = values.length;
   const [k, divisor] = SG[order]!;
   const out = new Array<number>(n);
