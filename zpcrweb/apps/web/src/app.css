@@ -5686,3 +5686,19 @@ summary.instrument__panelhead {
   font-size: 11.5px;
   color: var(--ink-dim);
 }
+
+/* The "N wells hidden" reminder in the table toolbar: a quiet outline until hovered, because it is
+   a state note, not an action anyone came here to press. */
+.cqbar__hidden {
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cqbar__hidden:hover {
+  color: var(--ink);
+  border-color: rgba(34, 211, 238, 0.45);
+}

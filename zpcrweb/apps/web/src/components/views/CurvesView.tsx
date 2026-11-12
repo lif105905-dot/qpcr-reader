@@ -1260,6 +1260,23 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
     ],
   );
 
+  /** Rows the filters above are hiding. Wells clicked off in the matrix, disabled fluorophores or
+   * samples, and the Cq range slider all narrow `tableRows` — silently, which reads as "the Cq
+   * disappeared". This counter plus the reset beside it make the hiding visible and undoable. */
+  const hiddenRowCount = useMemo(() => {
+    const total = buildAnalysisRows(run, () => true).length;
+    return Math.max(0, total - tableRows.length);
+  }, [run, tableRows.length]);
+
+  const resetTableFilters = () =>
+    onChange({
+      enabledWells: nonEmptyWellSet ?? fullWellSet,
+      disabledFluors: new Set<string>(),
+      disabledSamples: new Set<string>(),
+      cqMin: null,
+      cqMax: null,
+    });
+
   /** How many cycles the active step actually read — the domain the table's Cq axis spans, and
    * the same one the chart's x axis uses. Taken from a curve rather than from the protocol: a run
    * stopped early has fewer plate reads than its `.prcl` asked for, and the axis has to match the
@@ -2384,6 +2401,16 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
               ]}
             />
             <div className="cqbar__spacer" />
+            {hiddenRowCount > 0 && (
+              <button
+                type="button"
+                className="cqbar__hidden"
+                onClick={resetTableFilters}
+                title="把孔位选择、染料/样品过滤与 Cq 范围全部恢复，显示整块板"
+              >
+                已隐藏 {hiddenRowCount} 孔 · 全部显示
+              </button>
+            )}
             <button
               type="button"
               className="raw__download analysis__download"
