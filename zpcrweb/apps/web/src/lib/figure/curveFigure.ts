@@ -24,7 +24,9 @@ import {
 } from "../uplot/chart";
 
 /** The figure's width in CSS pixels — the layout's unit, exactly as in `meltFigure.ts`. */
-const FIGURE_CSS_WIDTH = 4800;
+/** Single-column journal width at 600 dpi: 3.5 in × 600 = 2100 px. A full-page-wide figure
+ * (8 in) was the earlier choice and read as oversized next to a manuscript's text column. */
+const FIGURE_CSS_WIDTH = 2100;
 
 /** How many times the old 1200 px figure this canvas is, in each direction. Every weight written in
  * "on-screen pixels" is multiplied by it, so the picture keeps its proportions at any resolution. */
@@ -33,9 +35,9 @@ const SUPERSAMPLE = FIGURE_CSS_WIDTH / 1200;
 /** Height as a fraction of width: the amplification plot is wider than tall on screen too. */
 const FIGURE_ASPECT = 0.62;
 
-/** The physical width the file is written for. 4800 px at 8 inches is 600 dpi — what a journal
- * wants for line art, and what the user asked for; at 2400 px the same file was 300 dpi. */
-const FIGURE_INCHES = 8;
+/** The physical width the file is written for — one journal column. 2100 px at 3.5 inches is
+ * 600 dpi, the resolution line art is asked for. */
+const FIGURE_INCHES = 3.5;
 
 /** The on-screen width these chart sizes were tuned for (see `BuildChartConfig.print`). Set well
  * below the canvas width on purpose: type and rules then occupy a *larger share* of the file than

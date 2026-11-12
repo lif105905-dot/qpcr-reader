@@ -37,7 +37,9 @@ import type { MeltView } from "../../state/useZpcrStore";
  * layout is computed in: uPlot sizes axes and picks tick intervals in CSS pixels, so a fixed
  * width is what makes the export look the same on a retina screen (4800 px wide) and a 1× one
  * (2400 px wide). Only the resolution differs between them. */
-const FIGURE_CSS_WIDTH = 4800;
+/** Single-column journal width at 600 dpi: 3.5 in × 600 = 2100 px. A full-page-wide figure
+ * (8 in) was the earlier choice and read as oversized next to a manuscript's text column. */
+const FIGURE_CSS_WIDTH = 2100;
 
 /** How many times the old 1200 px figure this canvas is; see `curveFigure.ts`. */
 const SUPERSAMPLE = FIGURE_CSS_WIDTH / 1200;
@@ -46,9 +48,9 @@ const SUPERSAMPLE = FIGURE_CSS_WIDTH / 1200;
  * picture the user was looking at rather than a reflowed one. */
 const FIGURE_ASPECT = 0.6;
 
-/** The physical width the file is written for — a figure's width on a page. The dpi tag follows
- * from it: a 4800 px canvas at 8 inches is 600 dpi, which is what a journal asks for. */
-const FIGURE_INCHES = 8;
+/** The physical width the file is written for — one journal column. The dpi tag follows from it:
+ * 2100 px at 3.5 inches is 600 dpi. */
+const FIGURE_INCHES = 3.5;
 
 /** The width a chart is drawn at on screen, and what the type sizes in `meltChart.ts` are tuned
  * for. The export divides by it to grow the labels in proportion to the bigger canvas. */
