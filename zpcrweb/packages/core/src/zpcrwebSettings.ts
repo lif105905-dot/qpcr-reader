@@ -138,7 +138,7 @@ function parseAnalysis(raw: unknown): ZpcrwebAnalysisSettings | undefined {
   const multiplier = finiteNumber(raw.thresholdMultiplier);
   if (multiplier !== undefined && multiplier > 0) out.thresholdMultiplier = multiplier;
 
-  if (raw.autoThresholdMethod === "noise" || raw.autoThresholdMethod === "curvature") {
+  if (raw.autoThresholdMethod === "noise" || raw.autoThresholdMethod === "curvature" || raw.autoThresholdMethod === "cfx") {
     out.autoThresholdMethod = raw.autoThresholdMethod;
   }
 

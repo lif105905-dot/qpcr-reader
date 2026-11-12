@@ -23,6 +23,7 @@ import {
   type AutoThresholdOptions,
 } from "./threshold.js";
 import { cfxBaselineWindow } from "./cfx/baseline.js";
+import { cfxThresholdValue } from "./cfx/threshold.js";
 import { refineCq, type CqMethod } from "./cqMethod.js";
 
 export interface CurveBaselineResult {
@@ -334,6 +335,15 @@ export function computeCqTable(
     // group also carries the steepest-rise value of every well in it. Wells excluded from the noise
     // cohort are excluded here too: a NTC that never rose would drag the median down.
     const shapes = new Map<string, number[]>();
+    const cfxShapes = new Map<string, number[]>();
+    if (options.autoThreshold?.method === "cfx") {
+      unique.forEach((c, i) => {
+        if (c.contributesToThreshold === false) return;
+        const estimate = cfxThresholdValue(baselines[i]!.correctedValues);
+        if (estimate === null || !Number.isFinite(estimate) || estimate <= 0) return;
+        cfxShapes.set(c.group, [...(cfxShapes.get(c.group) ?? []), estimate]);
+      });
+    }
     if (options.autoThreshold?.method === "curvature") {
       unique.forEach((c, i) => {
         if (c.contributesToThreshold === false) return;
@@ -350,6 +360,7 @@ export function computeCqTable(
           auto: {
             ...options.autoThreshold,
             curvatureEstimates: shapes.get(group),
+            cfxEstimates: cfxShapes.get(group),
           },
         }),
       );

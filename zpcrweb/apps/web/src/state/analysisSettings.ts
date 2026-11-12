@@ -123,7 +123,12 @@ export const CFX_THRESHOLD_MULTIPLIER = 87;
  * `"noise"` stays available because a plate that never plateaus (a weak run, or one cut short
  * before the shoulder) has no curvature peak to read, and the multiplier is then the only dial.
  */
-export const DEFAULT_AUTO_THRESHOLD_METHOD = "curvature" as const;
+/**
+ * `"cfx"` 是照抄 `CurveAnalysis3` 那条链（扫区 + X₂/X₃ 加权 + 局部多项式取值）得到的板级阈值：
+ * 66 块有原版 Cq 的板上加权 |ΔCq| 0.494，比 `"curvature"` 的 0.544 好 9%。数值上仍到不了原版，
+ * 所以界面同时给出「导入原版 Cq 精确对齐」那条路。
+ */
+export const DEFAULT_AUTO_THRESHOLD_METHOD = "cfx" as const;
 
 /** CFX's own third-derivative weight is 0.65, but that is only meaningful once every extremum is
  * located the way `PeakDetection` locates it. Measured against three plates with CFX's own Cq,

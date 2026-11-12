@@ -137,6 +137,8 @@ export interface AutoThresholdOptions {
   method?: AutoThresholdMethod;
   /** Per-curve {@link curvatureThreshold} readings for this dye; read only by the `"curvature"` rule. */
   curvatureEstimates?: number[];
+  /** Per-curve readings from the faithful `CurveAnalysis3` chain; read only by the `"cfx"` rule. */
+  cfxEstimates?: number[];
   /** Per-curve {@link CurvatureEstimate.peakFraction} for this dye. A dye whose curves are mostly
    * still climbing at the end of the run has no shoulder to read a threshold off, so the
    * `"curvature"` rule declines and the noise rule answers instead. */
@@ -157,7 +159,7 @@ export interface AutoThresholdOptions {
  *   line at 978.1 RFU and reproduces all 96 Cq values to a mean absolute error of **0.076 cycles**;
  *   the noise rule lands 1.93 cycles away on the same plate.
  */
-export type AutoThresholdMethod = "noise" | "curvature";
+export type AutoThresholdMethod = "noise" | "curvature" | "cfx";
 
 /**
  * The value at the centre of the steepest rise: the smoothed curve's largest second difference,
@@ -411,6 +413,13 @@ const THIRD_DERIVATIVE_WEIGHT = 0.35;
 const SECOND_DERIVATIVE_WEIGHT = 1 - THIRD_DERIVATIVE_WEIGHT;
 
 export function autoThreshold(noiseEstimates: number[], options: AutoThresholdOptions = {}): number {
+  if (options.method === "cfx") {
+    const shapes = options.cfxEstimates ?? [];
+    if (shapes.length > 0) {
+      const shape = shapes.reduce((a, b) => a + b, 0) / shapes.length;
+      if (shape > 0) return shape;
+    }
+  }
   if (options.method === "curvature") {
     const shapes = options.curvatureEstimates ?? [];
     if (shapes.length > 0) {
@@ -429,7 +438,7 @@ export function autoThreshold(noiseEstimates: number[], options: AutoThresholdOp
   // instead (measured on a plate of 41-cycle curves that never plateau: 0.4 cycle against CFX's
   // Cq at 20×, 1.1 at the healthy-plate 87×).
   const multiplier =
-    options.method === "curvature"
+    options.method === "curvature" || options.method === "cfx"
       ? DEFAULT_THRESHOLD_MULTIPLIER
       : (options.multiplier ?? DEFAULT_THRESHOLD_MULTIPLIER);
   return multiplier * median(noiseEstimates);

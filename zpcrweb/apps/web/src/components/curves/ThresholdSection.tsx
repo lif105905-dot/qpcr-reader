@@ -167,13 +167,14 @@ export function ThresholdSection({
             value={autoThresholdMethod}
             onChange={(e) => onAutoThresholdMethodChange(e.currentTarget.value as AutoThresholdMethod)}
           >
-            <option value="curvature">曲率（与 CFX 一致）</option>
+            <option value="cfx">CFX 原始链路</option>
+            <option value="curvature">曲率（简化）</option>
             <option value="noise">噪声倍数</option>
           </select>
         </label>
         <div className="threshold-k__foot">
           <span className="threshold-k__hint">
-            {autoThresholdMethod === "curvature"
+            {(autoThresholdMethod === "curvature" || autoThresholdMethod === "cfx")
               ? "取曲线拐点处的荧光值，和 CFX 软件等同"
               : "阈值 = 倍数 × 基线噪声中位数"}
           </span>

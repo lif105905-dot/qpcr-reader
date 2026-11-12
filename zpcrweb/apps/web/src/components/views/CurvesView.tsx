@@ -2242,7 +2242,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
                 ? `阈值来源：按原版 Cq 求解${
                     standingThresholdValue != null ? `（${Math.round(standingThresholdValue)} RFU）` : ""
                   }`
-                : "阈值来源：曲率估算 — 与原版可能差 0.3–1 循环；把原版导出的 Cq CSV 一起拖进来即可精确对齐"}
+                : "阈值来源：自动估算（CFX 原始链路）— 与原版平均差约 0.5 循环；把原版导出的 Cq CSV 一起拖进来即可逐孔对齐"}
             </p>
             <ThresholdSection
               groups={thresholdRows}

@@ -33,6 +33,19 @@ export interface CfxPeak {
 const FILTER_WIDTH = 5;
 const FILTER_POLY_ORDER = 4;
 const FLATNESS_VALUE = 0.15;
+/** `_SinglePointSideFluctuationFilterRatio` (math.cs:8373) — how small a wiggle must be to vanish. */
+const SPF_RATIO = 0.035;
+/** `_MergePeakCloseness` (math.cs:8383) — peaks closer than this on x may merge. */
+const MERGE_CLOSENESS = 5;
+/** `_MergeRelativePeakHeightThreshold` (math.cs:8377). */
+const MERGE_HEIGHT_RATIO = 0.05;
+/** `_MergeRelativeInnerPeakHeightRatioThreshold` (math.cs:8379) — how deep the dip may be. */
+const MERGE_DIP_RATIO = 0.05;
+/** 实验开关（只在 Node 测量脚本里用；浏览器里恒为 false 走默认行为）。 */
+const flag = (name: string): boolean =>
+  typeof process !== "undefined" && process.env?.[name] === "1";
+const SPF_ON = !flag("CFX_NO_SPF");
+const MERGE_ON = !flag("CFX_NO_MERGE");
 
 /** Coefficients of the polynomial that interpolates `values[center-2 .. center+2]` in local x. */
 function localPolynomial(values: number[], center: number): number[] {
@@ -160,6 +173,34 @@ function refineZeroCrossing(values: number[], index: number, from: number, to: n
   return crossing;
 }
 
+/** `IsLeftSPFPattern` (math.cs:8981) — a one-cycle side wiggle the instrument discards. */
+function isLeftSpf(d: number[], i: number): boolean {
+  if (i <= 3 || i >= d.length - 4) return false;
+  const [a, b, c, plus1, plus2] = [d[i - 2]!, d[i - 1]!, d[i]!, d[i + 1]!, d[i + 2]!];
+  return (
+    c < b &&
+    b < plus1 &&
+    b > a &&
+    a > d[i - 3]! &&
+    plus2 > plus1 &&
+    (b - c) / Math.abs(b) < SPF_RATIO
+  );
+}
+
+/** `IsRightSPFPattern` (math.cs:9013) — the mirror of {@link isLeftSpf}. */
+function isRightSpf(d: number[], i: number): boolean {
+  if (i <= 3 || i >= d.length - 4) return false;
+  const [a, b, c, plus1, plus2] = [d[i - 2]!, d[i - 1]!, d[i]!, d[i + 1]!, d[i + 2]!];
+  return (
+    b < c &&
+    c < a &&
+    c > plus1 &&
+    a < d[i - 3]! &&
+    plus2 < plus1 &&
+    (c - b) / Math.abs(c) < SPF_RATIO
+  );
+}
+
 interface Extremum {
   location: number;
   baseIndex: number;
@@ -180,6 +221,11 @@ function extremalPoints(values: number[]): { extrema: Extremum[]; firstDerivativ
     const isPeak = here > previous && here > next;
     const isTrough = here < previous && here < next;
     if (!isPeak && !isTrough) continue;
+    if (SPF_ON && (isLeftSpf(firstDerivative, i) || isRightSpf(firstDerivative, i))) {
+      extrema.pop();
+      prior = extrema.length === 0 ? 0 : extrema[extrema.length - 1]!.location;
+      continue;
+    }
     const refined = refineExtremum(firstDerivative, i);
     const location = refined <= prior ? i : refined;
     extrema.push({ location, baseIndex: i, isPeak });
@@ -220,7 +266,58 @@ export function detectPeaks(values: number[]): CfxPeak[] {
       baseIndex: extremum.baseIndex,
     });
   }
-  return peaks;
+  return MERGE_ON ? mergePeaks(peaks, extrema, firstDerivative) : peaks;
+}
+
+/**
+ * `MergePeakArray` (math.cs:9975) — adjacent peaks of nearly equal height with a shallow dip between
+ * them are the same rise split by filter noise; CFX folds them into one. It repeats until no pair
+ * qualifies, always merging the pair whose locations are closest (`ScanForBestMergeCandidatePair`).
+ */
+function mergePeaks(peaks: CfxPeak[], extrema: Extremum[], d: number[]): CfxPeak[] {
+  let list = peaks.slice();
+  for (let guard = 0; guard < 8; guard += 1) {
+    let bestIndex = -1;
+    let bestRank = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < list.length - 1; i += 1) {
+      const left = list[i]!;
+      const right = list[i + 1]!;
+      const distance = right.location - left.location;
+      if (!(distance < MERGE_CLOSENESS)) continue;
+      const tall = Math.max(left.height, right.height);
+      if (!(tall > 0)) continue;
+      const heightRank = (tall - Math.min(left.height, right.height)) / tall;
+      if (!(heightRank < MERGE_HEIGHT_RATIO)) continue;
+      // The trough between the two peaks, read off the derivative at its own extremum.
+      const inner = extrema.find(
+        (e) => !e.isPeak && e.baseIndex > left.baseIndex && e.baseIndex < right.baseIndex,
+      );
+      const dip = inner ? d[inner.baseIndex]! : Math.min(left.height, right.height);
+      const short = Math.min(left.height, right.height);
+      const dipRank = short === 0 ? 1 : (short - dip) / short;
+      if (!(dipRank < MERGE_DIP_RATIO)) continue;
+      if (distance < bestRank) {
+        bestRank = distance;
+        bestIndex = i;
+      }
+    }
+    if (bestIndex < 0) break;
+    const left = list[bestIndex]!;
+    const right = list[bestIndex + 1]!;
+    // `MergePeakPair` (math.cs:10180): midpoint location, taller height, outer boundaries kept.
+    list = [
+      ...list.slice(0, bestIndex),
+      {
+        location: (left.location + right.location) / 2,
+        baseIndex: Math.round((left.baseIndex + right.baseIndex) / 2),
+        height: Math.max(left.height, right.height),
+        startIndex: left.startIndex,
+        endIndex: right.endIndex,
+      },
+      ...list.slice(bestIndex + 2),
+    ];
+  }
+  return list;
 }
 
 /** `CalculateLeftPeakCutoff` — back off the previous extremum, stopping where the rise begins. */
