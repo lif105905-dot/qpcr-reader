@@ -191,7 +191,11 @@ export function buildMeltChart(cfg: BuildMeltChartConfig): {
               values: (_u: uPlot, splits: number[]) => splits.map((v) => `${v}`),
             }),
         label: "Temperature (°C)",
-        labelSize: Math.round(24 * scale),
+        // Both bands in scaled pixels under print: see the note in `chart.ts` — at 600 dpi uPlot's
+        // default spacing put the axis label on top of the tick numbers.
+        ...(cfg.print
+          ? { size: Math.round(30 * scale), labelSize: Math.round(30 * scale) }
+          : { labelSize: Math.round(24) }),
         labelFont,
         font: tickFont,
       },
@@ -214,7 +218,7 @@ export function buildMeltChart(cfg: BuildMeltChartConfig): {
         labelSize: Math.round(30 * scale),
         labelFont,
         font: tickFont,
-        size: Math.round(62 * scale),
+        size: Math.round((cfg.print ? 70 : 62) * scale),
       },
     ],
     cursor: { focus: { prox: 24 }, points: { size: 6 } },

@@ -1018,7 +1018,12 @@ export function buildChart(cfg: BuildChartConfig): {
         },
         ticks: { stroke: tickInk, width: 1, size: 5 },
         label: cfg.xAxis?.label ?? "Cycle",
-        labelSize: Math.round(24 * (print?.scale ?? 1)),
+        // uPlot sizes the x axis from `size` (its tick-label band) and puts the label in a
+        // `labelSize` band below that. On screen the defaults fit; at 600 dpi the label landed on
+        // top of the tick numbers, so the printed figure states both bands in scaled pixels.
+        ...(print
+          ? { size: Math.round(30 * print.scale), labelSize: Math.round(30 * print.scale) }
+          : { labelSize: Math.round(24) }),
         labelFont: fontPx(12) + " system-ui",
         font: fontPx(11) + " ui-monospace, monospace",
       },
