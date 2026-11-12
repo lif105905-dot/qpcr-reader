@@ -52,6 +52,13 @@ export {
 export { encodePlateRead, decodePlateReadSpec } from "./platereadEncode.js";
 export { parsePltd, parsePlatesetup2, isPltdName, SAMPLE_TYPES, SAMPLE_TYPE_TO_RAW } from "./pltd.js";
 export { plateToCsv, parsePlateCsv, isPlateCsvName, isBlankWell } from "./plateCsv.js";
+export { detectPeaks, sgFilter, type CfxPeak } from "./cfx/peakDetection.js";
+export {
+  cfxBaselineCorrect,
+  cfxBaselineWindow,
+  type CfxBaseline,
+  type CfxBaselineWindow,
+} from "./cfx/baseline.js";
 export {
   editWells,
   applyWellPatches,
