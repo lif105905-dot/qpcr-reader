@@ -52,7 +52,12 @@ export {
 export { encodePlateRead, decodePlateReadSpec } from "./platereadEncode.js";
 export { parsePltd, parsePlatesetup2, isPltdName, SAMPLE_TYPES, SAMPLE_TYPE_TO_RAW } from "./pltd.js";
 export { plateToCsv, parsePlateCsv, isPlateCsvName, isBlankWell } from "./plateCsv.js";
-export { detectPeaks, sgFilter, type CfxPeak } from "./cfx/peakDetection.js";
+export {
+  detectPeaks,
+  sgFilter,
+  previousExtremumBase,
+  type CfxPeak,
+} from "./cfx/peakDetection.js";
 export { savitzkyGolay } from "./threshold.js";
 export { cfxThresholdValue, CFX_THRESHOLD_WEIGHT } from "./cfx/threshold.js";
 export {

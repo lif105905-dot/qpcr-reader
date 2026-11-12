@@ -16,8 +16,7 @@
  * third derivative. The 0.65 weight therefore slides the position by a fraction of a cycle, not by
  * a cycle.
  */
-import { detectPeaks } from "./peakDetection.js";
-import { selectPeak } from "./baseline.js";
+import { detectPeaks, previousExtremumBase } from "./peakDetection.js";
 import { savitzkyGolay } from "../threshold.js";
 
 /** CFX's `m_MultipleThresholdWeightedAverageWeightFactor`. */
@@ -110,13 +109,15 @@ function valueAt(values: number[], x: number): number {
 export function cfxThresholdValue(values: number[]): number | null {
   if (values.length < 9) return null;
   const peaks = detectPeaks(values);
-  // The run's primary peak, chosen the same way the baseline window chooses it: the first peak
-  // above the mid-height line. `peaks[0]` would be the first *noise* bump, and its scan region is
-  // two cycles of nothing.
-  const peak = selectPeak(peaks);
+  // The run's primary peak: the tallest one. The first peak of a real curve is often the noise
+  // wobble in the first cycles, and its scan region is two cycles of nothing.
+  let peak: (typeof peaks)[number] | null = null;
+  for (const candidate of peaks) if (!peak || candidate.height > peak.height) peak = candidate;
   if (!peak) return null;
   const end = Math.max(1, Math.min(Math.round(peak.baseIndex), values.length - 2));
-  const start = 0;
+  // `CalcWidthScanRegion(peak, LEFT)`: the scan stops at the extremum before the peak, which on a
+  // noisy opening is what keeps the first two cycles' wobble from winning the maximum.
+  const start = Math.min(previousExtremumBase(values, end), end);
   const curvature = savitzkyGolay(values, 2);
   const best = maxIndexInRange(curvature, start, end);
   if (!(curvature[best]! > 0)) return null;

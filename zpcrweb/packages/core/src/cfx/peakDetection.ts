@@ -166,10 +166,10 @@ interface Extremum {
   isPeak: boolean;
 }
 
-/** `CalculatePeaks` reduced to the parts `CurveAnalysis3` reads: the extrema and their peaks. */
-export function detectPeaks(values: number[]): CfxPeak[] {
+/** Every extremum of the curve, in order — the chain `CalcWidthScanRegion` walks. */
+function extremalPoints(values: number[]): { extrema: Extremum[]; firstDerivative: number[] } {
   const n = values.length;
-  if (n < 9) return [];
+  if (n < 9) return { extrema: [], firstDerivative: [] };
   const firstDerivative = sgFilter(values, 1);
   const extrema: Extremum[] = [];
   let prior = 0;
@@ -185,6 +185,25 @@ export function detectPeaks(values: number[]): CfxPeak[] {
     extrema.push({ location, baseIndex: i, isPeak });
     prior = location;
   }
+  return { extrema, firstDerivative };
+}
+
+/** `CalcWidthScanRegion(_, LEFT)` needs the extremum before the peak: its base index. */
+export function previousExtremumBase(values: number[], before: number): number {
+  const { extrema } = extremalPoints(values);
+  let base = 0;
+  for (const extremum of extrema) {
+    if (extremum.baseIndex >= before) break;
+    base = extremum.baseIndex;
+  }
+  return base;
+}
+
+/** `CalculatePeaks` reduced to the parts `CurveAnalysis3` reads: the extrema and their peaks. */
+export function detectPeaks(values: number[]): CfxPeak[] {
+  const n = values.length;
+  const { extrema, firstDerivative } = extremalPoints(values);
+  if (n < 9 || extrema.length === 0) return [];
 
   const peaks: CfxPeak[] = [];
   for (let e = 0; e < extrema.length; e += 1) {
