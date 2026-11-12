@@ -35,6 +35,8 @@ interface Props {
   drawFactory?: boolean;
   /** Stable top of the linear y axis (whole run, not just the curves shown); see `buildChart`. */
   yCeiling?: number;
+  /** Stroke width of every well curve; see `buildChart`. */
+  curveWidth?: number;
   /** Overrides the x-axis presentation; see `buildChart`'s `xAxis`. */
   xAxis?: BuildChartConfig["xAxis"];
   /** What occupies the right-hand axis — temperatures or LED currents, never both (see
@@ -105,6 +107,7 @@ export function CurveChart({
   drawFactory = true,
   xAxis,
   yCeiling,
+  curveWidth,
   aux,
   baseline,
   curveView,
@@ -194,6 +197,7 @@ export function CurveChart({
       aux,
       baseline,
       yCeiling,
+      curveWidth,
       curveView,
       drawBaseline,
       scale,

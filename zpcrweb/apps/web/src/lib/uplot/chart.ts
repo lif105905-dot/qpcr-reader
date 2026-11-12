@@ -458,6 +458,10 @@ export interface TooltipData {
 
 export interface BuildChartConfig {
   wellCurves: PlotCurve[];
+  /** Stroke width of the well curves. One setting for every curve, so a screenshot at 1 px and the
+   * printed figure at 2 px stay the same picture; baselines, bands and reference dashes keep their
+   * own weights. */
+  curveWidth?: number;
   /** Upper bound for the linear y axis, in whichever units the rows carry. Callers pass the top of
    * the *whole* run rather than of the curves on screen: toggling wells, filtering by Cq or peeking
    * at one curve must not rescale the axis, or the same data looks tall in one screenshot and short
@@ -708,7 +712,7 @@ export function buildChart(cfg: BuildChartConfig): {
     series.push({
       label: `${curve.wellLabel} · ${curve.displayLabel ?? curve.dyeLabel}`,
       stroke: curve.color ?? curveColor(curve),
-      width: 1,
+      width: cfg.curveWidth ?? 1,
       dash: curve.isReference ? REF_DASH : undefined,
       points: { show: false },
     });

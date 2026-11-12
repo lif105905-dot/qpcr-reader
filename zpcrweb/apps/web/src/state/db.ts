@@ -209,6 +209,10 @@ export interface StoredView {
   /** Overlay the auto-detected linear baseline on each curve. */
   drawBaseline: boolean;
   scale: "linear" | "log";
+  /** Stroke width of the well/melt curves, 1–3. Odd values are the honest ones at 1× — 1.5 px
+   * lands on a half pixel and reads as grey — so the UI offers 1 / 1.5 / 2 and the export adds
+   * its own weight on top. */
+  curveWidth: number;
   showDark: boolean;
   /** Reference view's factory-calibration overlay. */
   showFactory: boolean;

@@ -15,6 +15,8 @@ interface Props {
   curves: MeltPlotCurve[];
   /** The melt's temperature axis, shared by every curve of the step. */
   temperaturesC: number[];
+  /** Stroke width of the melt curves; see `buildMeltChart`. */
+  curveWidth?: number;
   view: MeltView;
   highlight?: MeltHighlight | null;
   /** The well whose curve the pointer is on, by display label (`null` on leave) — the melt
@@ -33,6 +35,7 @@ export function MeltChart({
   curves,
   temperaturesC,
   view,
+  curveWidth,
   highlight = null,
   onHoverWell,
 }: Props) {
@@ -62,6 +65,7 @@ export function MeltChart({
       curves,
       temperaturesC,
       view,
+      curveWidth,
       width: Math.max(320, Math.floor(rect.width)),
       height: Math.max(240, Math.floor(rect.height)),
       onHover: setTip,

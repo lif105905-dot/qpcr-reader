@@ -89,6 +89,8 @@ export interface BuildMeltChartConfig {
   temperaturesC: number[];
   view: MeltView;
   width: number;
+  /** Stroke width of the melt curves (the export adds its own weight on top of this). */
+  curveWidth?: number;
   height: number;
   onHover: (t: MeltTooltipData | null) => void;
   /**
@@ -144,7 +146,7 @@ export function buildMeltChart(cfg: BuildMeltChartConfig): {
       stroke: color,
       // A hairline reads on a 2× screen but prints as almost nothing; the export carries a
       // heavier line so it survives 300 dpi at paper size.
-      width: print ? 1.8 : 1,
+      width: cfg.curveWidth != null ? (print ? cfg.curveWidth + 0.8 : cfg.curveWidth) : (print ? 1.8 : 1),
       // uPlot draws a marker on every reading by default once the points are far enough apart,
       // and a melt's 61 of them clear that threshold easily — which put a dot on every sample of
       // every curve. The Curves chart hides them on every series it draws and this matches it.

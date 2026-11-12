@@ -2160,6 +2160,19 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
               />
             </div>
 
+            <div className="rail__section">
+              <Toggle
+                label="曲线粗细"
+                value={String(settings.curveWidth)}
+                onChange={(v) => onChange({ curveWidth: Number(v) })}
+                options={[
+                  ["1", "细"],
+                  ["1.5", "中"],
+                  ["2", "粗"],
+                ]}
+              />
+            </div>
+
             <div className="rail__section rail__row">
               <Switch
                 label="Draw baseline"
@@ -2387,6 +2400,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
         ) : (
           <section className="curves__plot curves__plot--melt">
             <MeltChart
+              curveWidth={settings.curveWidth}
               curves={visibleMelt}
               temperaturesC={melt.segment.temperaturesC}
               view={settings.meltView}
@@ -2523,6 +2537,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
           </div>
           <CurveChart
             yCeiling={yCeiling}
+            curveWidth={settings.curveWidth}
             curves={plotCurves}
             darkCurves={!calibrationOn && settings.showDark ? enabledDark : NO_DARK_CURVES}
             aux={rightAxis}

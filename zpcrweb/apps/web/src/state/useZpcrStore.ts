@@ -262,6 +262,7 @@ export interface FileSettings extends AnalysisSettings {
   scale: Scale;
   /** Overlay each channel's dark (LED-off) background as a dotted line. Channel-space only —
    * see the "What actually gets plotted" note in CurvesView. */
+  curveWidth: number;
   showDark: boolean;
   /** Reference view: overlay each reference well's `FactoryRefRowCal` value as a flat dotted
    * line. On by default — comparing live against factory is what that view is for — and, like
@@ -812,6 +813,7 @@ function defaultSettings(): FileSettings {
     meltView: "derivative",
     drawBaseline: false,
     scale: "linear",
+    curveWidth: 1,
     showDark: false,
     // On by default: the live-vs-factory comparison is the Reference view's whole purpose.
     showFactory: true,
@@ -870,6 +872,7 @@ function viewOf(s: FileSettings): StoredView {
     meltView: s.meltView,
     drawBaseline: s.drawBaseline,
     scale: s.scale,
+    curveWidth: s.curveWidth ?? 1,
     showDark: s.showDark,
     showFactory: s.showFactory,
     refXAxis: s.refXAxis,
@@ -921,6 +924,7 @@ function fromStored(e: StoredFile): FileSettings {
     meltView: v.meltView === "raw" ? "raw" : "derivative",
     drawBaseline: v.drawBaseline,
     scale: v.scale,
+    curveWidth: v.curveWidth,
     showDark: v.showDark,
     showFactory: v.showFactory,
     refXAxis: v.refXAxis,
