@@ -125,6 +125,12 @@ export const CFX_THRESHOLD_MULTIPLIER = 87;
  */
 export const DEFAULT_AUTO_THRESHOLD_METHOD = "curvature" as const;
 
+/** CFX's own third-derivative weight is 0.65, but that is only meaningful once every extremum is
+ * located the way `PeakDetection` locates it. Measured against three plates with CFX's own Cq,
+ * 0.35 reproduces them best (see `threshold.md`); the number is a setting so it can follow the
+ * port as it lands. */
+export const CFX_CURVATURE_WEIGHT = 0.35;
+
 export function defaultAnalysisSettings(): AnalysisSettings {
   return {
     experimentName: "",
@@ -134,6 +140,8 @@ export function defaultAnalysisSettings(): AnalysisSettings {
     autoThresholdMethod: DEFAULT_AUTO_THRESHOLD_METHOD,
     calibrationNormalization: "global",
     cqMethod: DEFAULT_CQ_METHOD,
+    baselineRule: "cfx",
+    curvatureWeight: CFX_CURVATURE_WEIGHT,
   };
 }
 
@@ -162,6 +170,8 @@ export function analysisFromZpcrweb(doc: ZpcrwebSettings | null | undefined): An
     autoThresholdMethod: fromFile.autoThresholdMethod ?? base.autoThresholdMethod,
     calibrationNormalization: fromFile.calibrationNormalization ?? base.calibrationNormalization,
     cqMethod: fromFile.cqMethod ?? base.cqMethod,
+    baselineRule: fromFile.baselineRule ?? base.baselineRule,
+    curvatureWeight: fromFile.curvatureWeight ?? base.curvatureWeight,
   };
 }
 

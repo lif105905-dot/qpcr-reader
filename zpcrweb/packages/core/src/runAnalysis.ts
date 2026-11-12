@@ -605,6 +605,12 @@ export interface RunAnalysisSettings {
    * the document's own declared window — the app's default (4), which reproduces CFX's split far
    * better at a fixed threshold. Pass `false` to fall back to the declared window. */
   baselinePerWell?: boolean | number;
+  /** Which baseline rule to subtract: the file/declared window (`"declared"`, the default here) or
+   * the ported CFX peak search (`"cfx"`), which the app ships with. Not to be confused with
+   * `baselineSource` above, which picks between the file's and our own numbers. */
+  baselineRule?: "declared" | "cfx";
+  /** Weight of the third-derivative peak in the curvature threshold rule (CFX: 0.65). */
+  curvatureWeight?: number;
 }
 
 /**
@@ -1042,6 +1048,8 @@ export function computeRunAnalysis(
       baselineMode: settings.baselineMode,
       baselineDriftCorrection: settings.baselineDriftCorrection,
       baselineEndMargin: baselineMargin(settings.baselinePerWell),
+      baselineRule: settings.baselineRule,
+      curvatureWeight: settings.curvatureWeight,
         // `null` disables even a declared window (the library's own heuristic), which is what
         // measuring against CFX's exports does to compare the two rules.
     },

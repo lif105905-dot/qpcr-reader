@@ -234,7 +234,10 @@ function savitzkyGolay(values: number[], order: 0 | 1 | 2 | 3): number[] {
  * were 369.2 / 267.6 / 298.9 RFU, the unbounded rule gave 707 / 759 / 648, the bounded one 368 /
  * 420 / 332.
  */
-export function curvatureEstimate(values: number[]): CurvatureEstimate | null {
+export function curvatureEstimate(
+  values: number[],
+  weight: number = THIRD_DERIVATIVE_WEIGHT,
+): CurvatureEstimate | null {
   const n = values.length;
   if (n < 9) return null;
   const slope = savitzkyGolay(values, 1);
@@ -287,11 +290,73 @@ export function curvatureEstimate(values: number[]): CurvatureEstimate | null {
       thirdIndex = i;
     }
   }
-  const position =
-    thirdPeak > 0 ? SECOND_DERIVATIVE_WEIGHT * bestIndex + THIRD_DERIVATIVE_WEIGHT * thirdIndex : bestIndex;
+  // Both peaks are refined to a fraction of a cycle before they are weighted: CFX's
+  // `CalcInputLeftMaxPosCurvatureCycle` returns a sub-cycle location, and rounding it first moves
+  // the threshold by up to a cycle's worth of fluorescence.
+  const secondPos = refineExtremumIndex(curvature, bestIndex);
+  const thirdPos = thirdPeak > 0 ? refineExtremumIndex(third, thirdIndex) : secondPos;
+  const position = thirdPeak > 0 ? (1 - weight) * secondPos + weight * thirdPos : secondPos;
   const value = interpolate(values, position);
   if (!(value > 0)) return null;
   return { value, peakCycle: position, peakFraction: position / (n - 1) };
+}
+
+/** Solve a small dense system (Gaussian elimination with partial pivoting). */
+function solve(a: number[][], b: number[]): number[] {
+  const n = b.length;
+  const m = a.map((row, i) => [...row, b[i]!]);
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(m[r]![col]!) > Math.abs(m[pivot]![col]!)) pivot = r;
+    [m[col], m[pivot]] = [m[pivot]!, m[col]!];
+    const head = m[col]![col]!;
+    if (Math.abs(head) < 1e-12) continue;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const factor = m[r]![col]! / head;
+      if (factor === 0) continue;
+      for (let c = col; c <= n; c++) m[r]![c] = m[r]![c]! - factor * m[col]![c]!;
+    }
+  }
+  return m.map((row, i) => (Math.abs(row[i]!) < 1e-12 ? 0 : row[n]! / row[i]!));
+}
+
+/**
+ * Where the extrema of `series` actually sits, to a fraction of a cycle.
+ *
+ * CFX refines every extremum the same way (`PeakDetection.RefineExtremum`): fit an order-4
+ * polynomial through the five points around it, take the derivative, and bracket its root within
+ * ±0.75 of the integer index. `CalcBracketedRoot(0, 1, 0.001)` is the tolerance reproduced here.
+ */
+function refineExtremumIndex(series: number[], index: number): number {
+  const n = series.length;
+  if (index < 2 || index > n - 3) return index;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (let k = -2; k <= 2; k++) {
+    xs.push(k);
+    ys.push(series[index + k]!);
+  }
+  const powers = xs.map((x) => [1, x, x ** 2, x ** 3, x ** 4]);
+  const coefs = solve(powers, ys);
+  // d/dt of the fitted polynomial, in the local coordinate t = i − index.
+  const deriv = [coefs[1]!, 2 * coefs[2]!, 3 * coefs[3]!, 4 * coefs[4]!];
+  const value = (t: number) => deriv[0]! + deriv[1]! * t + deriv[2]! * t * t + deriv[3]! * t ** 3;
+  let lo = -0.75;
+  let hi = 0.75;
+  let flo = value(lo);
+  for (let step = 0; step < 40; step++) {
+    const mid = (lo + hi) / 2;
+    const fmid = value(mid);
+    if (flo * fmid <= 0) hi = mid;
+    else {
+      lo = mid;
+      flo = fmid;
+    }
+    if (hi - lo < 0.001) break;
+  }
+  const root = (lo + hi) / 2;
+  return Math.abs(root) <= 0.75 ? index + root : index;
 }
 
 /** A 3-point centred mean — `ArithmeticMeans.Center(…, 3.0)` on CFX's third derivative. */

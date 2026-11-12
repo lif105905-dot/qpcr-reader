@@ -22,6 +22,7 @@ import {
   resolveThreshold,
   type AutoThresholdOptions,
 } from "./threshold.js";
+import { cfxBaselineWindow } from "./cfx/baseline.js";
 import { refineCq, type CqMethod } from "./cqMethod.js";
 
 export interface CurveBaselineResult {
@@ -66,6 +67,20 @@ const MAX_BASELINE_PASSES = 6;
  * baselines even though the run persists `pCRDigitalFilter="WeightedMean"` (`threshold.md` §A.6),
  * so the filter named in the file is not applied to the curve that gets analysed.
  */
+/** How many opening cycles CFX's `PreprocessData` drops before it fits a baseline
+ * (`m_PreprocessedCyclesCutOff`). Measured against CFX's own exported curves: fitting from cycle 4
+ * reproduces its baseline line, fitting from cycle 1 does not (slope 13.6 vs its 9.1 on this data). */
+export const CFX_BASELINE_SKIP = 3;
+
+/** The baseline window CFX would choose for this curve, expressed in cycle numbers. */
+export function cfxBaselineRegion(cycles: number[], values: number[]): BaselineRegion {
+  const window = cfxBaselineWindow(values);
+  const last = Math.max(0, Math.min(cycles.length, values.length) - 1);
+  const endIndex = Math.max(1, Math.min(Math.round(window.endCycle), last));
+  const beginIndex = Math.min(CFX_BASELINE_SKIP, Math.max(0, endIndex - 2));
+  return { beginCycle: cycles[beginIndex]!, endCycle: cycles[endIndex]! };
+}
+
 export function baselineCorrectCurve(
   cycles: number[],
   values: number[],
@@ -74,6 +89,7 @@ export function baselineCorrectCurve(
   declaredWindow: BaselineRegion | null = null,
   driftCorrection = false,
   endMargin: number = BASELINE_END_MARGIN,
+  cfxBaseline = false,
 ): CurveBaselineResult {
   // A window the document declares for itself (`Zpcr.declaredBaselineWindow`) is used verbatim:
   // it is the instrument's own Data-Window baseline, so there is nothing left to search for, and
@@ -92,10 +108,22 @@ export function baselineCorrectCurve(
     return once.map((v, i) => v - (drift.slope * cycles[i]! + drift.intercept));
   };
 
-  let region = declaredWindow ?? baselineRegion(cycles, null, endMargin);
-  let correctedValues = correct(region, values, mode);
+  // CFX's own baseline (`cfx/baseline.ts`, ported from BioRad.PCR.Analysis): the window comes from
+  // a peak search rather than from a provisional Cq, and the fit starts a few cycles in because
+  // CFX's PreprocessData drops the run's opening cycles before it ever fits anything. With it on,
+  // the fixed point below is skipped — the window does not depend on the Cq.
+  let region: BaselineRegion;
+  let correctedValues: number[];
+  if (cfxBaseline) {
+    region = cfxBaselineRegion(cycles, values);
+    const fit = fitLinearBaseline(cycles, values, region);
+    correctedValues = values.map((v, i) => v - (fit.slope * cycles[i]! + fit.intercept));
+  } else {
+    region = declaredWindow ?? baselineRegion(cycles, null, endMargin);
+    correctedValues = correct(region, values, mode);
+  }
 
-  if (declaredWindow == null && threshold != null) {
+  if (!cfxBaseline && declaredWindow == null && threshold != null) {
     for (let pass = 0; pass < MAX_BASELINE_PASSES; pass++) {
       const next = baselineRegion(cycles, computeCq(cycles, correctedValues, threshold), endMargin);
       if (next.beginCycle === region.beginCycle && next.endCycle === region.endCycle) break;
@@ -238,6 +266,15 @@ export interface CqTableOptions {
    * Default {@link BASELINE_END_MARGIN} (2); the app passes 4, which is what reproduces CFX's own
    * split on `2026-11-09` at a fixed threshold (mean |ΔCq| 0.11 vs 0.45 at 2). */
   baselineEndMargin?: number;
+  /**
+   * Which baseline to subtract. `"declared"` (the default) honours the window the file declares or
+   * the per-well heuristic; `"cfx"` runs the ported CFX search instead (`cfxBaselineRegion`), which
+   * is what CFX itself does and what the app ships with.
+   */
+  baselineRule?: "declared" | "cfx";
+  /** Position weight of the third-derivative peak in the `"curvature"` threshold rule — CFX uses
+   * 0.65 (`CurveAnalysis3.m_MultipleThresholdWeightedAverageWeightFactor`). */
+  curvatureWeight?: number;
 }
 
 /**
@@ -300,7 +337,7 @@ export function computeCqTable(
     if (options.autoThreshold?.method === "curvature") {
       unique.forEach((c, i) => {
         if (c.contributesToThreshold === false) return;
-        const estimate = curvatureEstimate(baselines[i]!.correctedValues);
+        const estimate = curvatureEstimate(baselines[i]!.correctedValues, options.curvatureWeight);
         if (estimate === null) return;
         shapes.set(c.group, [...(shapes.get(c.group) ?? []), estimate.value]);
       });
@@ -323,8 +360,18 @@ export function computeCqTable(
   // Pass 1: whole-run baselines, and the automatic thresholds they imply.
   const declaredWindow = options.baselineWindow ?? null;
   const endMargin = options.baselineEndMargin ?? BASELINE_END_MARGIN;
+  const cfxBaseline = options.baselineRule === "cfx";
   const firstPass = unique.map((c) =>
-    baselineCorrectCurve(c.cycles, c.values, mode, null, declaredWindow, driftCorrection, endMargin),
+    baselineCorrectCurve(
+      c.cycles,
+      c.values,
+      mode,
+      null,
+      declaredWindow,
+      driftCorrection,
+      endMargin,
+      cfxBaseline,
+    ),
   );
   const placement = thresholdsFor(firstPass, false);
 
@@ -343,6 +390,7 @@ export function computeCqTable(
       declaredWindow,
       driftCorrection,
       endMargin,
+      cfxBaseline,
     ),
   );
   const thresholdByGroup = thresholdsFor(baselines, true);

@@ -125,8 +125,10 @@ const MELT_CHANNEL = 0;
 function windowSummary(
   manual: { beginCycle: number; endCycle: number } | null,
   declared: { beginCycle: number; endCycle: number } | null,
+  cfx: boolean,
 ): string {
   if (manual) return `手动 ${manual.beginCycle}–${manual.endCycle}`;
+  if (cfx) return "自动 · CFX 逐孔";
   return declared ? `自动 ${declared.beginCycle}–${declared.endCycle}` : "自动";
 }
 
@@ -1738,7 +1740,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
                 Baseline
               </span>
               <span className="rail__value">
-                {windowSummary(settings.baselineWindow, declaredWindow)}
+                {windowSummary(settings.baselineWindow, declaredWindow, settings.baselineRule === "cfx")}
               </span>
             </summary>
             <label className="analysis__field">
