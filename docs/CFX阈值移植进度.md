@@ -39,3 +39,25 @@ cd /Users/lijiehui/Documents/qpcr-tool
 ## 已有的兜底（不依赖算法）
 
 `apps/web/src/lib/solveThreshold.ts` 的 `solveThreshold`：导入 CFX 的 Cq 表（或用 WPS/Excel 里任意一孔的值）即可反解阈值，单孔校准后全板中位 |ΔCq| 0.02。这是日常核对用的准确口径。
+
+## 补充：信号相关项排查（2026-11-12 夜）
+
+### 观察
+按信号强度给 66 块板排序，阈值比值（我们 / 原版）随强度翻转：
+
+| 板类 | 阈值比值中位 | 我们的阈值 |
+|---|---|---|
+| 最强十块（振幅 ≥ 9,700 RFU，T* 1,280–2,650） | **0.54–0.61**（偏低） | 只有原版一半 |
+| 弱板（T* 268–370） | **1.2–1.6**（偏高） | 高出 20–60% |
+
+把阈值换算成「该孔幅度的相对高度」：原版**稳定在 15.2%**（p25 11.4%、p75 19.7%，4390 孔），我们强板约 9%、弱板约 25%。
+
+### 已排除的两个候选
+1. **导数缩放**（`PeakDetection.InitalizeData`，math.cs:8565）：一阶导 ×1/Δx、二阶 ×1/Δx²、三阶 ×1/Δx³；本数据 Δx = 1，缩放是恒等 → 不是原因。
+2. **扫区左界语义**（`CalcWidthScanRegion`，math.cs:9285）：左界 = `ExtremumPoints(peak.PeakExtremumIndex - 1).ExtremumBaseIndex`，即上一个极值点的基准下标——与我们 `previousExtremumBase` 的语义一致。把左界换成峰起点扫描，全量 0.553（与 0.552 同）→ 不是原因。
+
+### 另一个已排除的方向
+`HandleShortBaselineCorrection` / `HandleLateRiseCorrection`（分析程序集 6004/6011、6124/6136）看似正是「短基线/晚起峰」的修正，但它们属于**回归法**（`RunHighResRegression` 那条链），阈值法（`CurveAnalysis3.GetThreshold`）不走这里。
+
+### 下一个要查的点
+`_ExtremaList` 的构造：`CalculatePeaks`（math.cs:8593 起）在收集极值点时受 `_PeakSelectThreshold` / `_PeakDetectThreshold` 约束，而调用方 `CalculateAutoBeginEndCyclesThreshold` 把两者都设成 0。若我们的 `detectPeaks` 在这份极值表上多/少收了点，`ExtremumBaseIndex` 就会不同，扫区随之偏移——这与「随陡峭度滑动」的现象吻合，是目前最合理的剩余解释。
