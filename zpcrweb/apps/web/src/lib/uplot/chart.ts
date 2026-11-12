@@ -458,6 +458,11 @@ export interface TooltipData {
 
 export interface BuildChartConfig {
   wellCurves: PlotCurve[];
+  /** Upper bound for the linear y axis, in whichever units the rows carry. Callers pass the top of
+   * the *whole* run rather than of the curves on screen: toggling wells, filtering by Cq or peeking
+   * at one curve must not rescale the axis, or the same data looks tall in one screenshot and short
+   * in the next. Omit to scale to whatever is passed. */
+  yCeiling?: number;
   /** Dark (LED-off) background series to overlay as dotted lines; empty draws none. Purely a
    * display overlay — never subtracted from `wellCurves`. */
   darkCurves: PlotDarkCurve[];
@@ -955,7 +960,11 @@ export function buildChart(cfg: BuildChartConfig): {
       y: logAxis
         ? { distr: 3, range: () => [logAxis[0], logAxis[1]] }
         : cfg.baseline === "raw"
-          ? { distr: 1, range: (_u, _min, max) => [0, Math.max(1, max) * 1.04] }
+          ? {
+              distr: 1,
+              range: (_u, _min, max) =>
+                [0, Math.max(1, max, cfg.yCeiling ?? 0) * 1.04] as [number, number],
+            }
           : { distr: 1 },
       // Padded a little so the right-axis traces don't sit flush against the plot edges.
       [AUX_SCALE]: {

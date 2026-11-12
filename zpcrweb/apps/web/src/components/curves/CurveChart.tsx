@@ -33,6 +33,8 @@ interface Props {
   /** Draw the factory lines; see `buildChart`'s `drawFactory`. Default true — the values stay
    * in `factoryCurves` either way, since the ΔRFU/Drift % baselines are computed from them. */
   drawFactory?: boolean;
+  /** Stable top of the linear y axis (whole run, not just the curves shown); see `buildChart`. */
+  yCeiling?: number;
   /** Overrides the x-axis presentation; see `buildChart`'s `xAxis`. */
   xAxis?: BuildChartConfig["xAxis"];
   /** What occupies the right-hand axis — temperatures or LED currents, never both (see
@@ -102,6 +104,7 @@ export function CurveChart({
   factoryCurves = NO_FACTORY_CURVES,
   drawFactory = true,
   xAxis,
+  yCeiling,
   aux,
   baseline,
   curveView,
@@ -190,6 +193,7 @@ export function CurveChart({
       xAxis,
       aux,
       baseline,
+      yCeiling,
       curveView,
       drawBaseline,
       scale,

@@ -1260,6 +1260,17 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
     ],
   );
 
+  /** Top of the whole run's raw fluorescence, for the linear y axis. Deliberately independent of
+   * which wells are on: filtering or peeking must not rescale the plot, or the same run looks tall
+   * in one view and short in the next. Correction-mode curves are in ΔRFU units, so they keep the
+   * visible-max behaviour instead of borrowing this number. */
+  const yCeiling = useMemo(() => {
+    if (tableMode || meltMode || calibrationOn) return undefined;
+    let top = 0;
+    for (const c of allCurves) for (const v of c.mean) if (Number.isFinite(v) && v > top) top = v;
+    return top > 0 ? top : undefined;
+  }, [allCurves, calibrationOn, tableMode, meltMode]);
+
   /** Rows the filters above are hiding. Wells clicked off in the matrix, disabled fluorophores or
    * samples, and the Cq range slider all narrow `tableRows` — silently, which reads as "the Cq
    * disappeared". This counter plus the reset beside it make the hiding visible and undoable. */
@@ -2511,6 +2522,7 @@ export function CurvesView({ zpcr, settings, onChange }: Props) {
             />
           </div>
           <CurveChart
+            yCeiling={yCeiling}
             curves={plotCurves}
             darkCurves={!calibrationOn && settings.showDark ? enabledDark : NO_DARK_CURVES}
             aux={rightAxis}
