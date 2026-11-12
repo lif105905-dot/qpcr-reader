@@ -128,7 +128,11 @@ export const CFX_THRESHOLD_MULTIPLIER = 87;
  * 66 块有原版 Cq 的板上加权 |ΔCq| 0.494，比 `"curvature"` 的 0.544 好 9%。数值上仍到不了原版，
  * 所以界面同时给出「导入原版 Cq 精确对齐」那条路。
  */
-export const DEFAULT_AUTO_THRESHOLD_METHOD = "cfx" as const;
+// Measured over 66 CFX-exported plates (score_against_cfx.mjs): the simplified curvature rule with
+// the 0.35 weight scores 0.533 weighted |ΔCq|, the full `cfx` port 0.552 — and per plate the port is
+// clearly worse on three of the four reference plates (0.75–1.22 vs 0.06–0.61). The port is faithful
+// to the decompiled pipeline but our peak geometry still differs, so it stays an option, not the default.
+export const DEFAULT_AUTO_THRESHOLD_METHOD = "curvature" as const;
 
 /** CFX's own third-derivative weight is 0.65, but that is only meaningful once every extremum is
  * located the way `PeakDetection` locates it. Measured against three plates with CFX's own Cq,
