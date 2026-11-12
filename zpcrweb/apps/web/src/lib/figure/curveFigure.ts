@@ -24,12 +24,17 @@ import {
 } from "../uplot/chart";
 
 /** The figure's width in CSS pixels — the layout's unit, exactly as in `meltFigure.ts`. */
-const FIGURE_CSS_WIDTH = 2400;
+const FIGURE_CSS_WIDTH = 4800;
+
+/** How many times the old 1200 px figure this canvas is, in each direction. Every weight written in
+ * "on-screen pixels" is multiplied by it, so the picture keeps its proportions at any resolution. */
+const SUPERSAMPLE = FIGURE_CSS_WIDTH / 1200;
 
 /** Height as a fraction of width: the amplification plot is wider than tall on screen too. */
 const FIGURE_ASPECT = 0.62;
 
-/** The physical width the file is written for; the 300 dpi tag follows from it. */
+/** The physical width the file is written for. 4800 px at 8 inches is 600 dpi — what a journal
+ * wants for line art, and what the user asked for; at 2400 px the same file was 300 dpi. */
 const FIGURE_INCHES = 8;
 
 /** The on-screen width these chart sizes were tuned for (see `BuildChartConfig.print`). Set well
@@ -96,7 +101,7 @@ export async function renderCurveFigure(input: CurveFigureInput): Promise<CurveF
       print: { scale },
       // 2400 px wide, so a weight expressed in on-screen pixels has to be doubled just to look
       // the same; `INK_BOOST` then takes it past that.
-      curveWidth: (input.curveWidth ?? 1) * 2 * INK_BOOST,
+      curveWidth: (input.curveWidth ?? 1) * SUPERSAMPLE * INK_BOOST,
     });
 
     let markReady: (u: uPlot) => void = () => {};
@@ -172,7 +177,7 @@ function drawAnnotations(
       const right = plot.valToPos(plot.scales.x!.max!, "x", true);
       ctx.save();
       ctx.strokeStyle = THRESHOLD_INK;
-      ctx.lineWidth = 1.4 * 2 * INK_BOOST * ratio;
+      ctx.lineWidth = 1.4 * SUPERSAMPLE * INK_BOOST * ratio;
       ctx.setLineDash(THRESHOLD_DASH.map((n) => n * Math.max(1, scale * 0.8)));
       ctx.beginPath();
       ctx.moveTo(left, y);
@@ -190,7 +195,7 @@ function drawAnnotations(
       ctx.beginPath();
       ctx.arc(x, y, 4.5 * Math.max(1, scale * 0.8) * ratio, 0, Math.PI * 2);
       ctx.strokeStyle = m.color;
-      ctx.lineWidth = 1.6 * 2 * INK_BOOST * ratio;
+      ctx.lineWidth = 1.6 * SUPERSAMPLE * INK_BOOST * ratio;
       ctx.stroke();
     }
   }

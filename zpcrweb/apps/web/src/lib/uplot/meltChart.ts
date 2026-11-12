@@ -18,6 +18,7 @@
 
 import uPlot from "uplot";
 import type { MeltCurve } from "@zpcrweb/core";
+import { niceSplits } from "./chart";
 import { curveColor } from "../fluorColors";
 import type { MeltView } from "../../state/useZpcrStore";
 
@@ -176,7 +177,19 @@ export function buildMeltChart(cfg: BuildMeltChartConfig): {
         stroke: ink,
         grid,
         ticks,
-        values: (_u, splits) => splits.map((v) => `${v}`),
+        // uPlot's own increments are tuned for on-screen pixel sizes; at 4800 px it put a label
+        // every 1 °C, which at this type size is a wall of overlapping text. The printed figure
+        // fixes the count instead — see `niceSplits`.
+        ...(cfg.print
+          ? {
+              splits: (_u: uPlot, _i: number, min: number, max: number) =>
+                niceSplits(min, max, 10),
+              values: (_u: uPlot, splits: number[]) =>
+                splits.map((v) => (Number.isInteger(v) ? `${v}` : v.toFixed(1))),
+            }
+          : {
+              values: (_u: uPlot, splits: number[]) => splits.map((v) => `${v}`),
+            }),
         label: "Temperature (°C)",
         labelSize: Math.round(24 * scale),
         labelFont,
@@ -184,6 +197,14 @@ export function buildMeltChart(cfg: BuildMeltChartConfig): {
       },
       {
         stroke: ink,
+        ...(cfg.print
+          ? {
+              splits: (_u: uPlot, _i: number, min: number, max: number) =>
+                niceSplits(min, max, 8),
+              values: (_u: uPlot, splits: number[]) =>
+                splits.map((v) => Math.round(v).toLocaleString("en-US")),
+            }
+          : {}),
         // Horizontal rules off, same as the amplification plot: the vertical temperature rules are
         // what the eye uses to place a Tm, and at these amplitudes the horizontal ones only cross
         // the peaks.

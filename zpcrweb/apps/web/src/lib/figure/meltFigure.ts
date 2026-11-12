@@ -37,14 +37,17 @@ import type { MeltView } from "../../state/useZpcrStore";
  * layout is computed in: uPlot sizes axes and picks tick intervals in CSS pixels, so a fixed
  * width is what makes the export look the same on a retina screen (4800 px wide) and a 1× one
  * (2400 px wide). Only the resolution differs between them. */
-const FIGURE_CSS_WIDTH = 2400;
+const FIGURE_CSS_WIDTH = 4800;
+
+/** How many times the old 1200 px figure this canvas is; see `curveFigure.ts`. */
+const SUPERSAMPLE = FIGURE_CSS_WIDTH / 1200;
 
 /** Height as a fraction of width. Close to the on-screen chart's shape, so the export is the
  * picture the user was looking at rather than a reflowed one. */
 const FIGURE_ASPECT = 0.6;
 
-/** The physical width the file is written for — a figure's width on a page. The 300 dpi tag
- * follows from it: a 2400 px canvas at 8 inches is 300 dpi, which is what a journal asks for. */
+/** The physical width the file is written for — a figure's width on a page. The dpi tag follows
+ * from it: a 4800 px canvas at 8 inches is 600 dpi, which is what a journal asks for. */
 const FIGURE_INCHES = 8;
 
 /** The width a chart is drawn at on screen, and what the type sizes in `meltChart.ts` are tuned
@@ -191,7 +194,7 @@ export async function renderMeltFigure(input: MeltFigureInput): Promise<MeltFigu
       // Twice the old on-screen weight, but without the extra boost the amplification figure
       // takes: a melt draws every well over 30–95 °C, and 96 curves at that weight merge into a
       // single green slab. The ring and Tm-label ink below still gets `INK_BOOST`.
-      curveWidth: 2 * 1.8,
+      curveWidth: SUPERSAMPLE * 1.8,
     });
 
     // `ready` fires once the first draw has completed. The constructor draws synchronously, so

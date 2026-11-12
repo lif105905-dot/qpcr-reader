@@ -174,6 +174,25 @@ function isDecade(v: number): boolean {
 }
 
 /** `10000` → `10,000`, matching the axes CFX draws. */
+/**
+ * Round tick positions for a printed y axis — about `count` of them, on a 1/2/2.5/5 × 10ⁿ step.
+ *
+ * Needed because uPlot picks the linear axis' increments from absolute pixel sizes: at 4800 px the
+ * same figure came back with 48 labels in a column 87 px apart, i.e. overlapping text. Fixing the
+ * count rather than the step keeps the axis readable at every export resolution.
+ */
+export function niceSplits(min: number, max: number, count: number): number[] {
+  const span = max - min;
+  if (!(span > 0)) return [min];
+  const raw = span / Math.max(1, count);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+  const out: number[] = [];
+  for (let v = Math.ceil(min / step) * step; v <= max + step * 1e-9; v += step) out.push(v);
+  return out;
+}
+
 function thousands(v: number): string {
   return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
@@ -1029,7 +1048,18 @@ export function buildChart(cfg: BuildChartConfig): {
             }
           : // Same as the log axis: cycle rules only. A horizontal rule behind a rising curve adds
             // nothing a tick label doesn't say, and at 20,000 RFU it competes with the curves.
-            { grid: { show: false } }),
+            {
+              grid: { show: false },
+              // On screen uPlot's own increments are right; in a 4800 px export they are not (see
+              // `niceSplits`), so the printed axis takes a fixed count instead.
+              ...(print
+                ? {
+                    splits: (_u: uPlot, _i: number, min: number, max: number) =>
+                      niceSplits(min, max, 10),
+                    values: (_u: uPlot, splits: number[]) => splits.map((v) => thousands(v)),
+                  }
+                : {}),
+            }),
         ticks: { stroke: tickInk, width: 1 },
         label: yLabel(baseline, curveView),
         labelSize: Math.round(30 * (print?.scale ?? 1)),
