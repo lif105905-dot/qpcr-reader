@@ -1067,10 +1067,13 @@ export function buildChart(cfg: BuildChartConfig): {
             }),
         ticks: { stroke: tickInk, width: 1 },
         label: yLabel(baseline, curveView),
-        labelSize: Math.round(30 * (print?.scale ?? 1)),
+        // Tight bands in the export: the tick column only has to hold six characters ("22,500" at
+        // 0.6 em per monospace character) and the rotated title one line. The on-screen 62 units
+        // of tick column plus 30 of title left a third of the figure's left edge empty.
+        labelSize: Math.round((print ? 18 : 30) * (print?.scale ?? 1)),
         labelFont: fontPx(12) + " system-ui",
         font: fontPx(11) + " ui-monospace, monospace",
-        size: Math.round(62 * (print?.scale ?? 1)),
+        size: Math.round((print ? 44 : 62) * (print?.scale ?? 1)),
       },
       // Right-hand auxiliary axis — only drawn when something occupies it.
       {

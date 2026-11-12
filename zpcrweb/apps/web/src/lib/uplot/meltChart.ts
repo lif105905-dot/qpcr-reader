@@ -215,10 +215,11 @@ export function buildMeltChart(cfg: BuildMeltChartConfig): {
         grid: { show: false },
         ticks,
         label: cfg.view === "derivative" ? "−dF/dT (RFU/°C)" : "Fluorescence (RFU)",
-        labelSize: Math.round(30 * scale),
+        labelSize: Math.round((cfg.print ? 18 : 30) * scale),
         labelFont,
         font: tickFont,
-        size: Math.round((cfg.print ? 70 : 62) * scale),
+        // Five characters ("6,000") plus the rotated title — see the note in `chart.ts`.
+        size: Math.round((cfg.print ? 38 : 62) * scale),
       },
     ],
     cursor: { focus: { prox: 24 }, points: { size: 6 } },
