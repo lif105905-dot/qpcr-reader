@@ -992,6 +992,20 @@ export function App() {
   return (
     <div className="app">
       <header className="app__header" ref={headerRef} data-fit={fit}>
+        {/* Inside the LabKit window the tool is one of three, so the way back to the other two is
+            part of the header itself — the same "‹ 首页" the Western editor carries. In a plain
+            browser there is no launcher to go back to, so it stays out of the way. */}
+        {typeof window !== "undefined" && window.labkit?.goHome && (
+          <button
+            type="button"
+            className="app__home"
+            onClick={() => window.labkit?.goHome?.()}
+            title="回到 LabKit 首页"
+            aria-label="回到 LabKit 首页"
+          >
+            ‹ 首页
+          </button>
+        )}
         <Logo onClick={showAbout} />
         <div className="app__views">
           <ViewBar value={view} enabled={enabledViews} onChange={selectView} />

@@ -111,7 +111,7 @@ body {
 .pane-mid { flex: 1 1 auto; }
 .pane-right { flex: 0 0 360px; }
 .pane-head { padding: 8px 12px; border-bottom: 1px solid var(--line); }
-.pane-title { font-size: 12px; color: var(--text-dim); }
+.pane-title { font-size: 12px; letter-spacing: 0.01em; color: var(--text-dim); }
 .pane-body { flex: 1; overflow: auto; padding: 12px; }
 .placeholder { color: var(--text-dim); }
 

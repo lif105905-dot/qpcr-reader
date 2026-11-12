@@ -37,6 +37,28 @@
   border-radius: var(--radius);
   background: var(--panel);
 }
+/* The way back to the launcher, matching the Western editor's `.ghost` back link: same word, same
+   chevron, same quiet hover. It carries the header's height so the wordmark stays centred. */
+.app__home {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.app__home:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--border);
+  color: var(--ink);
+}
+
 /* Also a <button> (it opens the About view), so it opts out of the global button chrome. */
 .app__logo {
   flex: 0 0 auto;
@@ -1832,11 +1854,12 @@
 .curves__scrim {
   display: none;
 }
+/* Section headings read the same in both tools: plain sentence-case, no shouting. Uppercase and
+   wide tracking made the qPCR rail look like a different product beside the Western panes. */
 .rail__title {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--ink-muted);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  color: var(--ink-2);
   margin-bottom: 8px;
 }
 .rail__title {

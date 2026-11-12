@@ -8,6 +8,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("labkit", {
+  goHome: () => ipcRenderer.send("labkit:go-home"),
   /** Open (or focus) the qPCR reader window. */
   openQpcr: () => ipcRenderer.send("labkit:open-qpcr"),
 });

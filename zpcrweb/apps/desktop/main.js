@@ -148,6 +148,16 @@ let qpcrWindow = null;
 
 // The home page has no popup rights worth relying on (window.open is user-gesture sensitive), so it
 // asks for the other tool through the preload bridge instead.
+// "Back to the launcher": the home window is the app's front door, so the back button in a tool
+// closes that tool's window and raises it.
+ipcMain.on("labkit:go-home", () => {
+  if (qpcrWindow && !qpcrWindow.isDestroyed()) qpcrWindow.close();
+  if (homeWindow && !homeWindow.isDestroyed()) {
+    homeWindow.show();
+    homeWindow.focus();
+  }
+});
+
 ipcMain.on("labkit:open-qpcr", () => openQpcrWindow());
 
 function createHomeWindow() {
@@ -211,6 +221,9 @@ function openQpcrWindow() {
     title: "LabKit · qPCR 读取器",
     show: false,
     webPreferences: {
+      // Same bridge as the home window: the header's "‹ 首页" asks the shell to close this window
+      // and raise the launcher, which is the one thing the page cannot do by itself.
+      preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,

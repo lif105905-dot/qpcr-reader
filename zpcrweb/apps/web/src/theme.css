@@ -41,10 +41,10 @@
   --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Menlo", monospace;
 
   /* Metrics */
-  --radius: 12px;
-  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-sm: 9px;
   --gap: clamp(8px, 1.2cqi, 16px);
-  --header-h: 52px;
+  --header-h: 56px;
 }
 
 * {
