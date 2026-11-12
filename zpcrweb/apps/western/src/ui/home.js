@@ -14,21 +14,18 @@
     {
       id: 'blot',
       name: 'Western blot',
-      desc: '膜图成图与定量',
       icon: ICON.blot,
       ready: true
     },
     {
       id: 'gel',
       name: '凝胶',
-      desc: '凝胶图与标尺',
       icon: ICON.gel,
       ready: true
     },
     {
       id: 'qpcr',
       name: 'qPCR 读取器',
-      desc: 'CFX 数据与熔解',
       icon: ICON.qpcr,
       ready: true,
       external: 'qpcr'
@@ -53,8 +50,7 @@
       card.type = 'button';
       card.dataset.mode = m.id;
       card.innerHTML = '<span class="mode-icon">' + (m.icon || '') + '</span>'
-        + '<span class="mode-name">' + m.name + '</span>'
-        + '<span class="mode-desc">' + m.desc + '</span>';
+        + '<span class="mode-name">' + m.name + '</span>';
       card.addEventListener('click', function () {
         if (m.external === 'qpcr') openQpcr();
         else onPick(m.id);
