@@ -182,7 +182,10 @@ export function buildMeltChart(cfg: BuildMeltChartConfig): {
       },
       {
         stroke: ink,
-        grid,
+        // Horizontal rules off, same as the amplification plot: the vertical temperature rules are
+        // what the eye uses to place a Tm, and at these amplitudes the horizontal ones only cross
+        // the peaks.
+        grid: { show: false },
         ticks,
         label: cfg.view === "derivative" ? "−dF/dT (RFU/°C)" : "Fluorescence (RFU)",
         labelSize: Math.round(30 * scale),

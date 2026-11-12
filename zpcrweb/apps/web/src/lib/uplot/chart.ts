@@ -653,7 +653,6 @@ export function buildChart(cfg: BuildChartConfig): {
   /** Axis/label ink: the panel's pale blue, or near-black for a figure. */
   const ink = print ? "#1a1a1a" : "#8aa0c0";
   const gridInk = print ? "rgba(0,0,0,0.12)" : "rgba(120,200,255,0.10)";
-  const gridInkFaint = print ? "rgba(0,0,0,0.07)" : "rgba(120,200,255,0.06)";
   const tickInk = print ? "rgba(0,0,0,0.22)" : "rgba(120,200,255,0.12)";
   /** Type sizes are authored for the screen width; a figure scales them with the canvas. */
   const fontPx = (px: number) => (print ? `${(px * print.scale).toFixed(1)}px` : `${px}px`);
@@ -1024,7 +1023,9 @@ export function buildChart(cfg: BuildChartConfig): {
                 splits.map((v) => (isDecade(v) ? thousands(v) : "")),
               grid: { show: false },
             }
-          : { grid: { stroke: gridInkFaint, width: 1 } }),
+          : // Same as the log axis: cycle rules only. A horizontal rule behind a rising curve adds
+            // nothing a tick label doesn't say, and at 20,000 RFU it competes with the curves.
+            { grid: { show: false } }),
         ticks: { stroke: tickInk, width: 1 },
         label: yLabel(baseline, curveView),
         labelSize: Math.round(30 * (print?.scale ?? 1)),
