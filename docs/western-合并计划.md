@@ -58,6 +58,25 @@
 | 样式重写导致「看起来变了」 | 先搬结构、后调样式，分两次提交 |
 | 一次性大改无法回滚 | 每一步一个小提交，旧代码在 `main` 之外保留分支 |
 
+## 进度（P1 进行中）
+
+已迁到 `packages/western-core`，共 10 个模块、65 项 vitest 全绿：
+
+| 模块 | 迁移时的处理 |
+|---|---|
+| `util` | 直接搬；`round(-1.25,1) = -1.2`（Math.round 的负半值行为）由测试钉住 |
+| `theme` | 存储改为显式参数，缺省回退内存实现 |
+| `transform` | 纯几何，原样 |
+| `detect` | 引擎从全局 `window.Engine` 改为参数注入 |
+| `canvasmath` | 纯几何 + 命中测试，原样 |
+| `lanes` | `setCount` 仍原地改文档；`moveCenter`/`linkedMove` 原样 |
+| `marker` | 原文件的 `remaining()` 是死代码且恒返回 0，未随迁 |
+| `doc` | 老字段迁移（`laneEdges`→`laneCenters`、单 `marker`→`markers`）保留 |
+| `project` | 序列化函数由调用方注入，base64 用 `globalThis` |
+| `ladders` | 库与存储改为 `LadderEnv` 注入 |
+
+还剩 core 6 个：`annotations`(97) `image`(129) `render`(268) `figure`(275) `export`(356)，以及 `app.js`/`ui/*` 的 React 化（P3）。
+
 ## 下一步
 
-P1 第一个模块：`apps/western/src/core/util.js`（26 行）→ `packages/western-core/src/util.ts`，配 vitest，跑通后再按依赖顺序推进。
+按依赖继续：`annotations → image → render → figure → export`；每个都先用原 `apps/western/test/*.mjs` 的断言写新测试，再实现。
