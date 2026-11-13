@@ -10,3 +10,5 @@ export * from "./detect.js";
 export * from "./canvasmath.js";
 export * from "./lanes.js";
 export * from "./marker.js";
+export * from "./doc.js";
+export * from "./project.js";
