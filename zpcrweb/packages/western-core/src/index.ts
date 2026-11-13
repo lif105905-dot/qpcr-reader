@@ -7,3 +7,6 @@ export * from "./util.js";
 export * from "./theme.js";
 export * from "./transform.js";
 export * from "./detect.js";
+export * from "./canvasmath.js";
+export * from "./lanes.js";
+export * from "./marker.js";
