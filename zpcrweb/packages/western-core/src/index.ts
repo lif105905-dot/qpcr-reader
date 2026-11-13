@@ -16,5 +16,7 @@ export * from "./marker.js";
 export * from "./doc.js";
 export * from "./project.js";
 export * from "./image.js";
+export * from "./render.js";
+export * from "./figure.js";
 export * as annotations from "./annotations.js";
 export * as ladders from "./ladders.js";

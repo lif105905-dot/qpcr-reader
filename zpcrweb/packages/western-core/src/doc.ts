@@ -4,6 +4,7 @@
  * 移植自 `apps/western/src/core/doc.js`。`deserialize` 的老字段迁移（`laneEdges` → `laneCenters`、
  * 单 `marker` → `markers`）原样保留，升级后仍能打开旧文件。
  */
+import type { Annotation } from "./annotations.js";
 import type { Crop } from "./transform.js";
 
 export const DOC_VERSION = 1;
@@ -158,8 +159,8 @@ export interface WesternDoc {
   conditionRows: DocConditionRow[];
   /** 一图可有多孔 ladder（`markers[0]` 即旧版 `marker`）。 */
   markers: DocMarker[];
-  /** 六类标注，见 `annotations.ts`。 */
-  annotations: unknown[];
+  /** 六类标注，见 `annotations.ts`。读旧文件时可能是不完整的对象，用 `annotations.normalize` 过一遍。 */
+  annotations: Annotation[];
   style: DocStyle;
   exportOptions: DocExportOptions;
   /** 兼容旧字段，始终镜像 `markers[0]`。 */

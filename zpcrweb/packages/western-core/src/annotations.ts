@@ -30,6 +30,8 @@ export interface GroupAnnotation extends AnnotationBase {
   /** 选中的泳道下标，升序。 */
   lanes: number[];
   name: string;
+  /** 组名单独的字号；`null`/缺省 = 跟随全局。 */
+  pt?: number | null;
 }
 
 export interface BandAnnotation extends AnnotationBase {
@@ -46,6 +48,8 @@ export interface ConditionAnnotation extends AnnotationBase {
   marks: ConditionMark[];
   /** 每行字号；`null` = 跟随全局。 */
   pt: number | null;
+  /** 药名颜色；`auto`/缺省 = 正文色。 */
+  color?: string | null;
 }
 
 export interface BoxAnnotation extends AnnotationBase {
