@@ -58,9 +58,9 @@
 | 样式重写导致「看起来变了」 | 先搬结构、后调样式，分两次提交 |
 | 一次性大改无法回滚 | 每一步一个小提交，旧代码在 `main` 之外保留分支 |
 
-## 进度（P1 进行中）
+## 进度（P1 完成）
 
-已迁到 `packages/western-core`，共 10 个模块、65 项 vitest 全绿：
+已迁到 `packages/western-core`：**15 个 core 模块全部完成**，120 项 vitest 全绿，`tsc --noEmit` 干净。
 
 | 模块 | 迁移时的处理 |
 |---|---|
@@ -74,8 +74,13 @@
 | `doc` | 老字段迁移（`laneEdges`→`laneCenters`、单 `marker`→`markers`）保留 |
 | `project` | 序列化函数由调用方注入，base64 用 `globalThis` |
 | `ladders` | 库与存储改为 `LadderEnv` 注入 |
+| `annotations` | 以命名空间导出（`annotations.add`），避开与 `ladders` 的 `normalize`/`get` 撞名 |
+| `image` | 只迁纯计算；画布相关改为 `sampleDisplay` 返回 RGBA，交给 UI 层贴图 |
+| `figure` | `layout` 拆出 `labelHeight` / `textWidth` / `groupTiers` / `wrapText` 四个纯函数；`Rect` 改名 `LayoutRect` |
+| `render` | 绘图指令改成可辨识联合（`text`/`line`/`rect`/`circle`/`image`），`toSvg` 由场景生成 |
+| `export` | 纯字节构造，逐字节与旧实现一致（CRC32/zip、TIFF IFD、PNG pHYs、PDF、PPTX） |
 
-还剩 core 6 个：`annotations`(97) `image`(129) `render`(268) `figure`(275) `export`(356)，以及 `app.js`/`ui/*` 的 React 化（P3）。
+P1 的 15 个 core 模块全部完成。剩下 `app.js`(864) 与 `ui/*`(约 2,000 行) 的 React 化，即 P3；P2 的存储接口在 P1 的 `project`/`doc` 之上再加一层即可。
 
 ## 下一步
 
